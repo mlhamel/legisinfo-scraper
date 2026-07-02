@@ -4,6 +4,7 @@ import sys
 import re
 import argparse
 import subprocess
+import shutil
 import xml.etree.ElementTree as ET
 import requests
 from bs4 import BeautifulSoup
@@ -13,9 +14,64 @@ from datetime import datetime
 LEGISINFO_BASE = "https://www.parl.ca/legisinfo"
 DOC_VIEWER_BASE = "https://www.parl.ca/DocumentViewer"
 
+# Stage priority mapping for sequential commits
+STAGE_DETAILS = {
+    "first-reading": ("First Reading", 1),
+    "second-reading": ("Second Reading", 2),
+    "committee": ("Committee stage", 3),
+    "third-reading": ("Third Reading", 4),
+    "royal-assent": ("Royal Assent", 5)
+}
+
+def get_stage_info(slug):
+    """Return friendly stage name and chronological sorting priority."""
+    for key, (name, priority) in STAGE_DETAILS.items():
+        if key in slug.lower():
+            return name, priority
+    return slug.replace("-", " ").title(), 99
+
 def run_command(args, cwd=None):
     """Run a system command and return output."""
     result = subprocess.run(args, capture_output=True, text=True, cwd=cwd)
+    return result
+
+def clean_sponsor_name(name):
+    """Clean the sponsor name to Title Case."""
+    if not name:
+        return "Parliament of Canada"
+    if name.isupper():
+        return name.title()
+    return name
+
+def generate_sponsor_email(name):
+    """Generate a clean mock parliament email address from sponsor name."""
+    if not name:
+        return "sponsor@parl.gc.ca"
+    cleaned = name.lower()
+    # Remove common titles
+    cleaned = re.sub(r'\b(the honourable|senator|p\.c\.|m\.p\.)\b', '', cleaned)
+    cleaned = re.sub(r'[^a-z\s]', '', cleaned).strip()
+    email_prefix = ".".join(cleaned.split())
+    if not email_prefix:
+        email_prefix = "sponsor"
+    return f"{email_prefix}@parl.gc.ca"
+
+def run_git_commit(message, date_str, repo_path, author_name=None, author_email=None):
+    """Run git commit with backdated dates and optional author override."""
+    env = os.environ.copy()
+    cmd = ["git", "commit", "-m", message]
+    
+    if date_str:
+        env["GIT_AUTHOR_DATE"] = date_str
+        env["GIT_COMMITTER_DATE"] = date_str
+        cmd.append(f"--date={date_str}")
+        
+    if author_name:
+        env["GIT_AUTHOR_NAME"] = author_name
+    if author_email:
+        env["GIT_AUTHOR_EMAIL"] = author_email
+        
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=repo_path, env=env)
     return result
 
 def clean_inline_text(elem):
@@ -209,7 +265,7 @@ def print_progress(current, total, bill_num="", status=""):
         print()
 
 def parse_readme_index(readme_path):
-    """Parse existing README.md index to recover title, status, activity, and downloaded stages."""
+    """Parse existing README.md index to recover status, activity, and downloaded stages."""
     index_data = {}
     if not os.path.exists(readme_path):
         return index_data
@@ -360,24 +416,48 @@ def migrate_existing_index(repo_path, session, session_name):
         except Exception as e:
             log_message(f"Warning: Failed to migrate old centralized index: {e}")
 
-def scrape_bill(session, bill_number, target_bill_dir, already_downloaded_stages, dry_run=False):
-    """Scrape detailed bill metadata and draft texts, returning progress details and commit message."""
+def get_stage_date_from_xml(metadata_path, slug):
+    """Find the completion date of a specific stage in the metadata XML."""
+    if not os.path.exists(metadata_path):
+        return None
+    try:
+        tree = ET.parse(metadata_path)
+        root = tree.getroot()
+        stage_name, _ = get_stage_info(slug)
+        
+        # Search all stages in House and Senate
+        for stage_node in root.findall(".//HouseBillStage") + root.findall(".//SenateBillStage"):
+            name = stage_node.findtext("BillStageNameEn") or ""
+            if stage_name.lower() in name.lower():
+                dt = stage_node.findtext("LastStageEventStartDateTime")
+                if dt:
+                    return dt
+    except Exception:
+        pass
+    return None
+
+def get_latest_event_date_from_xml(metadata_path):
+    """Get the latest bill event date from metadata XML."""
+    if not os.path.exists(metadata_path):
+        return None
+    try:
+        tree = ET.parse(metadata_path)
+        root = tree.getroot()
+        dt = root.findtext(".//LatestBillEventDateTime")
+        if dt:
+            return dt
+    except Exception:
+        pass
+    return None
+
+def scrape_bill(session, bill_number, target_bill_dir, repo_path, already_downloaded_stages, dry_run=False):
+    """Scrape detailed bill metadata and draft texts sequentially, returning results."""
     os.makedirs(target_bill_dir, exist_ok=True)
     metadata_path = os.path.join(target_bill_dir, "metadata.xml")
     summary_path = os.path.join(target_bill_dir, "summary.md")
-    drafts_dir = os.path.join(target_bill_dir, "text_drafts")
-    os.makedirs(drafts_dir, exist_ok=True)
+    bill_xml_path = os.path.join(target_bill_dir, "bill_text.xml")
+    bill_md_path = os.path.join(target_bill_dir, "bill_text.md")
     
-    old_status = ""
-    old_activity = ""
-    if os.path.exists(metadata_path):
-        try:
-            tree = ET.parse(metadata_path)
-            old_status = tree.findtext(".//StatusNameEn") or ""
-            old_activity = tree.findtext(".//LatestBillEventTypeName") or ""
-        except Exception:
-            pass
-            
     # 1. Fetch detailed metadata XML
     detail_url = f"{LEGISINFO_BASE}/en/bill/{session}/{bill_number}/xml"
     try:
@@ -386,73 +466,114 @@ def scrape_bill(session, bill_number, target_bill_dir, already_downloaded_stages
             if not dry_run:
                 with open(metadata_path, "w", encoding="utf-8") as f:
                     f.write(response.text)
+                summary_md = make_summary_markdown(metadata_path)
+                with open(summary_path, "w", encoding="utf-8") as f:
+                    f.write(summary_md)
         else:
             log_message(f"    Failed to fetch detailed XML for {bill_number} (status {response.status_code})")
-            return False, already_downloaded_stages, ""
+            return False, already_downloaded_stages, "Parliament of Canada", "sponsor@parl.gc.ca", 0
     except Exception as e:
         log_message(f"    Error fetching metadata for {bill_number}: {e}")
-        return False, already_downloaded_stages, ""
-        
-    # 2. Generate summary markdown
-    if not dry_run:
-        summary_md = make_summary_markdown(metadata_path)
-        with open(summary_path, "w", encoding="utf-8") as f:
-            f.write(summary_md)
-            
-    # 3. Find and download text drafts
-    xml_links = extract_xml_links_from_docviewer(session, bill_number)
-    current_stages = set(already_downloaded_stages)
-    added_drafts = []
-    
-    for slug, url in xml_links.items():
-        xml_file_path = os.path.join(drafts_dir, f"{slug}.xml")
-        md_file_path = os.path.join(drafts_dir, f"{slug}.md")
-        
-        # Check if already downloaded
-        if slug not in current_stages or not os.path.exists(xml_file_path):
-            log_message(f"    Downloading draft {bill_number} {slug}: {url}")
-            try:
-                res = requests.get(url)
-                if res.status_code == 200:
-                    current_stages.add(slug)
-                    added_drafts.append(slug)
-                    if not dry_run:
-                        with open(xml_file_path, "w", encoding="utf-8") as f:
-                            f.write(res.text)
-                        try:
-                            root = ET.fromstring(res.content)
-                            md_content = xml_to_markdown(root)
-                            with open(md_file_path, "w", encoding="utf-8") as md_f:
-                                md_f.write(md_content)
-                        except Exception as parse_err:
-                            log_message(f"      Failed to parse XML draft to Markdown: {parse_err}")
-                else:
-                    log_message(f"      Failed (status {res.status_code})")
-            except Exception as e:
-                log_message(f"      Error downloading draft: {e}")
-                
-    new_status = ""
-    new_activity = ""
+        return False, already_downloaded_stages, "Parliament of Canada", "sponsor@parl.gc.ca", 0
+
+    # Parse sponsor details from the newly downloaded metadata.xml
+    sponsor_name = "Parliament of Canada"
     try:
         tree = ET.parse(metadata_path)
-        new_status = tree.findtext(".//StatusNameEn") or ""
-        new_activity = tree.findtext(".//LatestBillEventTypeName") or ""
+        root = tree.getroot()
+        sp_name = root.findtext(".//SponsorPersonName") or ""
+        sp_title = root.findtext(".//SponsorAffiliationTitleEn") or ""
+        if sp_name:
+            if sp_title:
+                sponsor_name = f"{sp_title} {sp_name}"
+            else:
+                sponsor_name = sp_name
     except Exception:
         pass
         
-    # Build commit message
-    if not old_status:
-        commit_msg = f"Bill {bill_number}: Initialize tracking"
-    elif new_status != old_status:
-        commit_msg = f"Bill {bill_number}: Status updated to '{new_status}'"
-    elif new_activity != old_activity:
-        commit_msg = f"Bill {bill_number}: Activity: '{new_activity}'"
-    elif added_drafts:
-        commit_msg = f"Bill {bill_number}: Added text drafts ({', '.join(added_drafts)})"
-    else:
-        commit_msg = f"Bill {bill_number}: Daily update"
+    author_name = clean_sponsor_name(sponsor_name)
+    author_email = generate_sponsor_email(sponsor_name)
+    
+    # 2. Find available stage text documents from DocumentViewer
+    xml_links = extract_xml_links_from_docviewer(session, bill_number)
+    
+    # Filter to stages not yet downloaded in this session
+    stages_to_download = []
+    for slug, url in xml_links.items():
+        if slug not in already_downloaded_stages:
+            stages_to_download.append((slug, url))
+            
+    # Sort stages chronologically
+    stages_to_download.sort(key=lambda x: get_stage_info(x[0])[1])
+    
+    current_stages = set(already_downloaded_stages)
+    committed_count = 0
+    
+    # 3. Sequentially download and commit each new stage
+    for slug, url in stages_to_download:
+        stage_name, _ = get_stage_info(slug)
+        log_message(f"    Downloading sequential stage {bill_number} {stage_name}: {url}")
         
-    return True, current_stages, commit_msg
+        try:
+            res = requests.get(url)
+            if res.status_code == 200:
+                current_stages.add(slug)
+                
+                if not dry_run:
+                    # Overwrite bill_text
+                    with open(bill_xml_path, "w", encoding="utf-8") as f:
+                        f.write(res.text)
+                    try:
+                        root = ET.fromstring(res.content)
+                        md_content = xml_to_markdown(root)
+                        with open(bill_md_path, "w", encoding="utf-8") as md_f:
+                            md_f.write(md_content)
+                    except Exception as parse_err:
+                        log_message(f"      Failed to parse XML to Markdown: {parse_err}")
+                        
+                    # Stage files in git
+                    run_command(["git", "add", 
+                                 f"{session}/bills/{bill_number}/bill_text.xml", 
+                                 f"{session}/bills/{bill_number}/bill_text.md",
+                                 f"{session}/bills/{bill_number}/metadata.xml",
+                                 f"{session}/bills/{bill_number}/summary.md"], cwd=repo_path)
+                    
+                    diff_staged = run_command(["git", "diff", "--cached", "--quiet"], cwd=repo_path)
+                    if diff_staged.returncode != 0:
+                        commit_msg = f"Bill {bill_number}: {stage_name} text update"
+                        stage_date = get_stage_date_from_xml(metadata_path, slug)
+                        if not stage_date:
+                            stage_date = get_latest_event_date_from_xml(metadata_path)
+                            
+                        log_message(f"  Committing sequential stage {bill_number} ({stage_name}) at {stage_date or 'now'} by {author_name}...")
+                        run_git_commit(commit_msg, stage_date, repo_path, author_name, author_email)
+                        committed_count += 1
+            else:
+                log_message(f"      Failed (status {res.status_code})")
+        except Exception as e:
+            log_message(f"      Error: {e}")
+            
+    # 4. Force populate bill_text.xml/md if missing on disk
+    if not stages_to_download and not os.path.exists(bill_xml_path) and xml_links:
+        sorted_available = sorted(xml_links.keys(), key=lambda s: get_stage_info(s)[1])
+        if sorted_available:
+            latest_slug = sorted_available[-1]
+            latest_url = xml_links[latest_slug]
+            log_message(f"    Restoring sequential text files from latest stage ({latest_slug})...")
+            try:
+                res = requests.get(latest_url)
+                if res.status_code == 200:
+                    if not dry_run:
+                        with open(bill_xml_path, "w", encoding="utf-8") as f:
+                            f.write(res.text)
+                        root = ET.fromstring(res.content)
+                        md_content = xml_to_markdown(root)
+                        with open(bill_md_path, "w", encoding="utf-8") as md_f:
+                            md_f.write(md_content)
+            except Exception as e:
+                log_message(f"      Error restoring file: {e}")
+                
+    return True, current_stages, author_name, author_email, committed_count
 
 def main():
     parser = argparse.ArgumentParser(description="LEGISinfo Git Scraper")
@@ -564,11 +685,26 @@ def main():
             already_downloaded_stages = set()
             is_skipped = False
             
+            # Paths to the target sequential files
+            target_bill_dir = os.path.join(bills_dir, bill_number)
+            bill_xml_path = os.path.join(target_bill_dir, "bill_text.xml")
+            metadata_path = os.path.join(target_bill_dir, "metadata.xml")
+            summary_path = os.path.join(target_bill_dir, "summary.md")
+            
+            # Clean up old text_drafts subfolder if it exists (migrate layout)
+            old_drafts_dir = os.path.join(target_bill_dir, "text_drafts")
+            if os.path.exists(old_drafts_dir):
+                shutil.rmtree(old_drafts_dir, ignore_errors=True)
+                if not args.dry_run:
+                    run_command(["git", "rm", "-r", "--cached", f"{session}/bills/{bill_number}/text_drafts"], cwd=args.repo)
+            
             if existing:
                 already_downloaded_stages = existing["stages"]
+                # Skip optimization: only skip if metadata is identical AND the sequential file is present on disk!
                 if (existing["status"] == status and 
                     existing["activity"] == activity and 
-                    already_downloaded_stages):
+                    already_downloaded_stages and 
+                    os.path.exists(bill_xml_path)):
                     
                     # Update cache/checks
                     all_bills_data[bill_number] = {
@@ -582,23 +718,25 @@ def main():
                     is_skipped = True
                     print_progress(processed, total_to_process, bill_number, "Skipped (Up to date)")
                     
-                    # Save session index incrementally even on skip to record check time
                     if not args.dry_run:
                         save_readme_index(session_readme_path, all_bills_data, session)
                     continue
             
             if not is_skipped:
-                # Run detailed scrape
+                # Run scrape
                 print_progress(processed, total_to_process, bill_number, "Scraping detailed data")
-                target_bill_dir = os.path.join(bills_dir, bill_number)
                 
-                success, updated_stages, commit_msg = scrape_bill(
+                # A. Download details and sequential drafts inside scrape_bill
+                success, updated_stages, author_name, author_email, stage_commits = scrape_bill(
                     session, 
                     bill_number, 
                     target_bill_dir, 
+                    args.repo,
                     already_downloaded_stages, 
                     args.dry_run
                 )
+                
+                committed_count += stage_commits
                 
                 if success:
                     all_bills_data[bill_number] = {
@@ -609,22 +747,35 @@ def main():
                         "last_checked": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     }
                     
+                    # B. Check for metadata updates (Status/Activity event changes)
                     if not args.dry_run:
-                        # 1. Update session index file immediately
+                        # Extract metadata info
+                        old_status = ""
+                        old_activity = ""
+                        if os.path.exists(metadata_path):
+                            try:
+                                # We can read the old one from git or disk
+                                # But metadata_path was overwritten by scrape_bill, so we check status events
+                                pass
+                            except Exception:
+                                pass
+                        
                         save_readme_index(session_readme_path, all_bills_data, session)
                         
-                        # 2. Stage changes (bill folder + session README.md)
-                        run_command(["git", "add", f"{session}/bills/{bill_number}", f"{session}/README.md"], cwd=args.repo)
+                        # Stage session index and metadata files
+                        run_command(["git", "add", 
+                                     f"{session}/bills/{bill_number}/metadata.xml", 
+                                     f"{session}/bills/{bill_number}/summary.md",
+                                     f"{session}/README.md"], cwd=args.repo)
                         
-                        # 3. Check if there are staged changes
                         diff_staged = run_command(["git", "diff", "--cached", "--quiet"], cwd=args.repo)
                         if diff_staged.returncode != 0:
-                            log_message(f"  Staging and committing {bill_number}: {commit_msg}")
-                            commit_res = run_command(["git", "commit", "-m", commit_msg], cwd=args.repo)
-                            if commit_res.returncode == 0:
-                                committed_count += 1
-                            else:
-                                log_message(f"    Failed to commit: {commit_res.stderr}")
+                            # Something changed, commit it!
+                            commit_msg = f"Bill {bill_number}: Metadata update"
+                            event_date = get_latest_event_date_from_xml(metadata_path)
+                            log_message(f"  Committing metadata updates for {bill_number} at {event_date or 'now'} by {author_name}...")
+                            run_git_commit(commit_msg, event_date, args.repo, author_name, author_email)
+                            committed_count += 1
                 
                 processed += 1
                 print_progress(processed, total_to_process, bill_number, "Completed")
@@ -637,7 +788,7 @@ def main():
             run_command(["git", "add", f"{session}/README.md", "README.md"], cwd=args.repo)
             diff_readme = run_command(["git", "diff", "--cached", "--quiet"], cwd=args.repo)
             if diff_readme.returncode != 0:
-                run_command(["git", "commit", "-m", "Scraper: Save index status on user interrupt"], cwd=args.repo)
+                run_git_commit("Scraper: Save index status on user interrupt", None, args.repo)
         log_message("Progress saved. Exiting gracefully.")
         sys.exit(0)
         
@@ -649,7 +800,7 @@ def main():
         diff_readme = run_command(["git", "diff", "--cached", "--quiet"], cwd=args.repo)
         if diff_readme.returncode != 0:
             log_message("\nCommitting remaining checked timestamps and root index...")
-            run_command(["git", "commit", "-m", "Scraper: Update index checked timestamps"], cwd=args.repo)
+            run_git_commit("Scraper: Update index checked timestamps", None, args.repo)
             
     print(f"Completed. Processed {processed} bills. Created {committed_count} commits in data repository.")
 
