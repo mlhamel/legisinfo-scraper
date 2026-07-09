@@ -4,11 +4,26 @@ version = "0.1.0"
 description = "Scraper for Canadian parliamentary bill data, committing updates to a Git repository."
 readme = "README.md"
 requires-python = ">=3.10"
+authors = [
+    { name = "Mathieu Leduc-Hamel", email = "marrakis@gmail.com" }
+]
 dependencies = [
     "requests>=2.31.0",
     "beautifulsoup4>=4.12.0",
+]
+
+[project.optional-dependencies]
+dev = [
     "pytest>=8.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/mlhamel/legisinfo-scraper"
+Repository = "https://github.com/mlhamel/legisinfo-scraper"
+Issues = "https://github.com/mlhamel/legisinfo-scraper/issues"
+
+[project.scripts]
+legisinfo-scraper = "legisinfo_scraper.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/legisinfo_scraper"]

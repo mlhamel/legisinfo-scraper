@@ -2,16 +2,37 @@
 
 A Python utility to scrape Canadian parliamentary bills and laws from the LEGISinfo API and document viewer, converting updates into Git commits in a separate data repository.
 
-## Installation and Usage
+## Installation
 
-This project uses `uv` for dependency management. You do not need to manually create a virtual environment or run pip.
+You can run `legisinfo-scraper` as a command-line tool directly:
 
-To run the scraper:
+### Running directly (via uvx)
+To run the scraper without installing it locally:
 ```bash
-uv run scraper.py --repo /path/to/legisinfo.git --session 45-1
+uvx --from git+https://github.com/mlhamel/legisinfo-scraper.git legisinfo-scraper --repo /path/to/legisinfo.git --session 45-1
 ```
 
-`uv` will automatically set up a virtual environment, install the dependencies from `pyproject.toml`, and run the scraper.
+### Installing globally (via uv)
+```bash
+uv tool install git+https://github.com/mlhamel/legisinfo-scraper.git
+```
+
+### Installing from PyPI (once published)
+```bash
+uv tool install legisinfo-scraper
+```
+
+## Usage
+
+Once installed, the CLI tool `legisinfo-scraper` will be available directly:
+```bash
+legisinfo-scraper --repo /path/to/legisinfo.git --session 45-1
+```
+
+To scrape all historical legislative data across all sessions:
+```bash
+legisinfo-scraper --repo /path/to/legisinfo.git --session all
+```
 
 ### Script Workflow
 1. Downloads the active session bills list in XML format.
