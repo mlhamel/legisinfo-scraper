@@ -73,5 +73,39 @@ class TestScraperIntegration(unittest.TestCase):
         for i in range(len(dates) - 1):
             self.assertLessEqual(dates[i], dates[i+1], f"Commits are not in chronological order: {dates}")
 
+    def test_status_reporter(self):
+        # Create a mock session index
+        session_code = "45-1"
+        session_dir = os.path.join(self.repo_path, session_code)
+        os.makedirs(session_dir, exist_ok=True)
+        readme_path = os.path.join(session_dir, "README.md")
+        
+        # Write a mock index showing 1 bill is scraped
+        with open(readme_path, "w", encoding="utf-8") as f:
+            f.write(
+                "# Parliament Session 45-1 Bills Index\n\n"
+                "| Bill | Title | Current Status | Latest Activity | Downloaded Stages | Last Checked |\n"
+                "| --- | --- | --- | --- | --- | --- |\n"
+                "| [S-1](...) | Title | Status | Activity | `first-reading` | 2026-07-09 |\n"
+            )
+            
+        # Run report_status.py via subprocess
+        status_script = os.path.join(os.path.dirname(self.scraper_path), "report_status.py")
+        cmd = [
+            sys.executable,
+            status_script,
+            "--repo", self.repo_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        self.assertEqual(result.returncode, 0)
+        # S-1 has no bill_text.xml on disk, so 45-1 should be "Incomplete"
+        self.assertIn("45-1", result.stdout)
+        self.assertIn("Incomplete", result.stdout)
+        self.assertIn("Session", result.stdout)
+        self.assertIn("Total Bills", result.stdout)
+        self.assertIn("Scraped Bills", result.stdout)
+        self.assertIn("Status", result.stdout)
+
 if __name__ == "__main__":
     unittest.main()

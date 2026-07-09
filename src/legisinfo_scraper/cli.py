@@ -119,7 +119,7 @@ def main():
                 if not session_bills:
                     continue
                     
-                session_name = session_bills[0].findtext("ParlSessionEn") or ""
+                session_name = " ".join((session_bills[0].findtext("ParlSessionEn") or "").split())
                 print(f"\n=== Processing Session: {session_code} ({session_name.split('~')[0]}) ===")
                 
                 session_dir = os.path.join(args.repo, session_code)
@@ -142,7 +142,7 @@ def main():
                     bill_number = bill.findtext("BillNumberFormatted") or ""
                     if not bill_number:
                         continue
-                    status = bill.findtext("CurrentStatusEn") or ""
+                    status = " ".join((bill.findtext("CurrentStatusEn") or "").split())
                     if args.committee_only and "committee" not in status.lower():
                         continue
                     bills_to_process.append((bill_number, bill))
@@ -172,9 +172,9 @@ def main():
                 
                 processed = 0
                 for bill_number, bill_node in bills_to_process:
-                    status = bill_node.findtext("CurrentStatusEn") or ""
-                    activity = bill_node.findtext("LatestActivityEn") or ""
-                    title = bill_node.findtext("LongTitleEn") or ""
+                    status = " ".join((bill_node.findtext("CurrentStatusEn") or "").split())
+                    activity = " ".join((bill_node.findtext("LatestActivityEn") or "").split())
+                    title = " ".join((bill_node.findtext("LongTitleEn") or "").split())
                     
                     # Check for skip/resume optimization
                     existing = index_data.get(bill_number)

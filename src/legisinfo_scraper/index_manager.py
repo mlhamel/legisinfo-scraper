@@ -14,14 +14,23 @@ def parse_readme_index(readme_path):
         with open(readme_path, "r", encoding="utf-8") as f:
             content = f.read()
             
-        for line in content.splitlines():
+        # Reconstruct split lines for robust parsing
+        raw_lines = content.splitlines()
+        lines = []
+        for line in raw_lines:
+            if line.strip().startswith("|") and not line.startswith("|") and lines:
+                lines[-1] = lines[-1].rstrip() + " " + line.strip()
+            else:
+                lines.append(line)
+                
+        for line in lines:
             # Matches: | [S-2](...) | Title | Status | Activity | Stages | Checked |
             match = re.search(r'\|\s*\[([^\]]+)\]\([^)]+\)\s*\|([^|]+)\|([^|]+)\|([^|]+)\|([^|]*)\|\s*([^|]*)\s*\|', line)
             if match:
                 bill_num = match.group(1).strip()
-                title = match.group(2).strip()
-                status = match.group(3).strip()
-                activity = match.group(4).strip()
+                title = " ".join(match.group(2).split())
+                status = " ".join(match.group(3).split())
+                activity = " ".join(match.group(4).split())
                 stages_str = match.group(5).strip()
                 checked = match.group(6).strip()
                 
