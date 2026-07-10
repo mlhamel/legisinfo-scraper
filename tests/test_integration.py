@@ -107,5 +107,39 @@ class TestScraperIntegration(unittest.TestCase):
         self.assertIn("Scraped Bills", result.stdout)
         self.assertIn("Status", result.stdout)
 
+    def test_html_fallback(self):
+        # Run scraper targeting session 36-1 with limit 3 (which will fetch HTML-only bills)
+        cmd = [
+            sys.executable,
+            self.scraper_path,
+            "--repo", self.repo_path,
+            "--session", "36-1",
+            "--limit", "3"
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, f"Scraper failed with: {result.stderr}\nOutput: {result.stdout}")
+        
+        bills_dir = os.path.join(self.repo_path, "36-1", "bills")
+        self.assertTrue(os.path.exists(bills_dir))
+        
+        # Verify that we have at least one bill with bill_text.md and bill_text.xml
+        scraped_bills = os.listdir(bills_dir)
+        has_text_bill = False
+        for b in scraped_bills:
+            xml_p = os.path.join(bills_dir, b, "bill_text.xml")
+            md_p = os.path.join(bills_dir, b, "bill_text.md")
+            if os.path.exists(xml_p) and os.path.exists(md_p):
+                has_text_bill = True
+                with open(xml_p, "r", encoding="utf-8") as f:
+                    xml_content = f.read()
+                    self.assertIn("HTML Fallback", xml_content)
+                with open(md_p, "r", encoding="utf-8") as f:
+                    md_content = f.read()
+                    self.assertGreater(len(md_content), 100)
+                    self.assertIn("Bill", md_content)
+                break
+        self.assertTrue(has_text_bill, "None of the scraped 36-1 bills got populated with bill_text.md via HTML Fallback")
+
 if __name__ == "__main__":
     unittest.main()

@@ -92,6 +92,11 @@ def xml_to_markdown(elem, indent=""):
             
     return "".join(lines)
 
+def clean_date_str(date_str):
+    if not date_str or date_str.startswith("0001-01-01"):
+        return "N/A"
+    return date_str
+
 def make_summary_markdown(bill_xml_path):
     """Generate summary.md content from metadata XML."""
     try:
@@ -106,13 +111,17 @@ def make_summary_markdown(bill_xml_path):
         status_en = bill_node.findtext("StatusNameEn") or ""
         sponsor = bill_node.findtext("SponsorPersonName") or ""
         activity_en = bill_node.findtext("LatestBillEventTypeName") or ""
-        activity_dt = bill_node.findtext("LatestBillEventDateTime") or ""
+        activity_dt = clean_date_str(bill_node.findtext("LatestBillEventDateTime"))
         
         md = []
         md.append(f"# Bill {bill_num}: {title_en}\n\n")
         md.append(f"- **Current Status**: {status_en}\n")
         md.append(f"- **Sponsor**: {sponsor}\n")
-        md.append(f"- **Latest Activity**: {activity_en} (at {activity_dt})\n\n")
+        
+        if activity_dt and activity_dt != "N/A":
+            md.append(f"- **Latest Activity**: {activity_en} (at {activity_dt})\n\n")
+        else:
+            md.append(f"- **Latest Activity**: {activity_en}\n\n")
         
         md.append("## Legislative Stage History\n\n")
         md.append("| Chamber | Stage | Status | Completed Date |\n")
@@ -123,7 +132,7 @@ def make_summary_markdown(bill_xml_path):
         for stage in house_stages:
             name = stage.findtext("BillStageNameEn") or ""
             state = stage.findtext("StateNameEn") or ""
-            dt = stage.findtext("LastStageEventStartDateTime") or ""
+            dt = clean_date_str(stage.findtext("LastStageEventStartDateTime"))
             md.append(f"| House of Commons | {name} | {state} | {dt} |\n")
             
         # Senate stages
@@ -131,7 +140,7 @@ def make_summary_markdown(bill_xml_path):
         for stage in senate_stages:
             name = stage.findtext("BillStageNameEn") or ""
             state = stage.findtext("StateNameEn") or ""
-            dt = stage.findtext("LastStageEventStartDateTime") or ""
+            dt = clean_date_str(stage.findtext("LastStageEventStartDateTime"))
             md.append(f"| Senate | {name} | {state} | {dt} |\n")
             
         return "".join(md)
