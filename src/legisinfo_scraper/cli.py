@@ -9,7 +9,7 @@ import requests
 
 from .config import LEGISINFO_BASE
 from .crawler import scrape_bill
-from .git_utils import run_command, run_git_commit
+from .git_utils import find_commit_by_event_id, run_command, run_git_autosquash, run_git_commit, run_git_fixup
 from .index_manager import migrate_existing_index, parse_readme_index, save_readme_index, update_root_readme
 from .utils import log_message, print_progress
 
@@ -42,6 +42,8 @@ def main():
     parser.add_argument("--limit", type=int, default=0, help="Limit number of bills to process (default: 0 for all)")
     parser.add_argument("--dry-run", action="store_true", help="Download data but do not modify git history")
     parser.add_argument("--committee-only", action="store_true", help="Only track bills currently in committee")
+    parser.add_argument("--cache-dir", default=".cache", help="Path to the local persistent cache directory")
+    parser.add_argument("--force", action="store_true", help="Force scraping and update formatting for existing bills")
 
     args = parser.parse_args()
 
@@ -191,7 +193,8 @@ def main():
                         # Skip optimization: only skip if metadata is identical AND
                         # the sequential file is present on disk!
                         if (
-                            existing["status"] == status
+                            not args.force
+                            and existing["status"] == status
                             and existing["activity"] == activity
                             and already_downloaded_stages
                             and os.path.exists(bill_xml_path)
@@ -214,13 +217,15 @@ def main():
                         print_progress(processed, total_to_process, bill_number, "Scraping detailed data")
 
                         cache_bill_dir = os.path.join(temp_dir, session_code, bill_number)
+                        stages_to_pass = set() if args.force else already_downloaded_stages
                         success, updated_stages, author_name, author_email, bill_commits = scrape_bill(
                             session_code,
                             bill_number,
                             cache_bill_dir,
                             args.repo,
-                            already_downloaded_stages,
+                            stages_to_pass,
                             args.dry_run,
+                            args.cache_dir,
                         )
 
                         if success:
@@ -245,8 +250,7 @@ def main():
 
         # 3. Apply commits sequentially
         committed_count = 0
-        if all_pending_commits:
-            pass
+        rebase_needed = False
 
         for commit in all_pending_commits:
             session_code = commit["session"]
@@ -286,13 +290,24 @@ def main():
 
                     diff_staged = run_command(["git", "diff", "--cached", "--quiet"], cwd=args.repo)
                     if diff_staged.returncode != 0:
-                        commit_msg = f"Bill {bill_number}: {stage_name} text update"
-                        log_message(
-                            f"  Committing sequential stage {bill_number} ({stage_name}) "
-                            f"at {stage_date or 'now'} by {author_name}..."
-                        )
-                        run_git_commit(commit_msg, stage_date, args.repo, author_name, author_email)
-                        committed_count += 1
+                        event_id = f"{session_code}/{bill_number}/{commit['slug']}"
+                        commit_msg = f"Bill {bill_number}: {stage_name} text update\n\nLegisinfo-Event: {event_id}"
+
+                        existing_hash = find_commit_by_event_id(event_id, args.repo)
+                        if existing_hash:
+                            log_message(
+                                f"  Creating Git fixup for stage {bill_number} ({stage_name}) "
+                                f"targeting commit {existing_hash[:7]}..."
+                            )
+                            run_git_fixup(existing_hash, args.repo, author_name, author_email)
+                            rebase_needed = True
+                        else:
+                            log_message(
+                                f"  Committing sequential stage {bill_number} ({stage_name}) "
+                                f"at {stage_date or 'now'} by {author_name}..."
+                            )
+                            run_git_commit(commit_msg, stage_date, args.repo, author_name, author_email)
+                            committed_count += 1
 
             elif commit["type"] == "metadata":
                 event_date = commit["event_date"]
@@ -324,13 +339,32 @@ def main():
 
                     diff_staged = run_command(["git", "diff", "--cached", "--quiet"], cwd=args.repo)
                     if diff_staged.returncode != 0:
-                        commit_msg = f"Bill {bill_number}: Metadata update"
-                        log_message(
-                            f"  Committing metadata updates for {bill_number} "
-                            f"at {event_date or 'now'} by {author_name}..."
-                        )
-                        run_git_commit(commit_msg, event_date, args.repo, author_name, author_email)
-                        committed_count += 1
+                        event_id = f"{session_code}/{bill_number}/metadata"
+                        commit_msg = f"Bill {bill_number}: Metadata update\n\nLegisinfo-Event: {event_id}"
+
+                        existing_hash = find_commit_by_event_id(event_id, args.repo)
+                        if existing_hash:
+                            log_message(
+                                f"  Creating Git fixup for metadata updates for {bill_number} "
+                                f"targeting commit {existing_hash[:7]}..."
+                            )
+                            run_git_fixup(existing_hash, args.repo, author_name, author_email)
+                            rebase_needed = True
+                        else:
+                            log_message(
+                                f"  Committing metadata updates for {bill_number} "
+                                f"at {event_date or 'now'} by {author_name}..."
+                            )
+                            run_git_commit(commit_msg, event_date, args.repo, author_name, author_email)
+                            committed_count += 1
+
+        # 3.5 Run autosquash rebase if needed
+        if not args.dry_run and rebase_needed:
+            log_message("Performing Git autosquash rebase to integrate formatting updates...")
+            rebase_res = run_git_autosquash(args.repo)
+            if rebase_res.returncode != 0:
+                log_message(f"Warning: Git autosquash rebase failed: {rebase_res.stderr}")
+                log_message("You may need to resolve conflicts manually.")
 
         # 4. Save and commit README indices
         if not args.dry_run:

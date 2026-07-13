@@ -16,6 +16,25 @@ from .parser import (
 from .utils import clean_sponsor_name, generate_sponsor_email, log_message
 
 
+def fetch_url_with_cache(url, cache_path=None):
+    """Fetch URL contents, using a local cache file if cache_path is specified."""
+    if cache_path and os.path.exists(cache_path):
+        with open(cache_path, encoding="utf-8") as f:
+            return f.read()
+
+    try:
+        res = requests.get(url, timeout=30)
+        if res.status_code == 200:
+            if cache_path:
+                os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+                with open(cache_path, "w", encoding="utf-8") as f:
+                    f.write(res.text)
+            return res.text
+    except Exception as e:
+        log_message(f"    Error fetching URL {url}: {e}")
+    return None
+
+
 def clean_html_to_markdown(soup_node):
     """Clean DocumentViewer HTML block and format it into clean Markdown recursively."""
 
@@ -120,15 +139,18 @@ def clean_html_to_markdown(soup_node):
     return "\n".join(cleaned_lines).strip()
 
 
-def scrape_html_bill_text(session, bill_number, slug):
+def scrape_html_bill_text(session, bill_number, slug, cache_dir=None):
     """Scrape and assemble all pages of the bill text from DocumentViewer HTML, returning markdown."""
     stage_url = f"{DOC_VIEWER_BASE}/en/{session}/bill/{bill_number}/{slug}"
+    cache_path = None
+    if cache_dir:
+        cache_path = os.path.join(cache_dir, "docviewer", session, f"{bill_number}_{slug}.html")
+
     try:
-        res = requests.get(stage_url)
-        if res.status_code != 200:
+        html = fetch_url_with_cache(stage_url, cache_path)
+        if not html:
             return ""
 
-        html = res.text
         # Find all page links
         page_pattern = rf'/DocumentViewer/en/{session}/bill/{bill_number}/{slug}/page-[^"\'\s>]+'
         page_links = re.findall(page_pattern, html, re.IGNORECASE)
@@ -146,11 +168,16 @@ def scrape_html_bill_text(session, bill_number, slug):
         text_blocks = []
         if unique_pages:
             log_message(f"      Found {len(unique_pages)} HTML pages to fetch...")
-            for pl in unique_pages:
+            for idx, pl in enumerate(unique_pages):
                 page_url = f"https://www.parl.ca{pl}"
-                p_res = requests.get(page_url)
-                if p_res.status_code == 200:
-                    soup = BeautifulSoup(p_res.text, "html.parser")
+                p_cache_path = None
+                if cache_dir:
+                    p_cache_path = os.path.join(
+                        cache_dir, "stages", session, bill_number, f"{slug}_page-{idx + 1}.html"
+                    )
+                p_html = fetch_url_with_cache(page_url, p_cache_path)
+                if p_html:
+                    soup = BeautifulSoup(p_html, "html.parser")
                     content_div = soup.find(id="publicationContent") or soup.find(
                         class_="publication-container-content"
                     )
@@ -169,16 +196,19 @@ def scrape_html_bill_text(session, bill_number, slug):
         return ""
 
 
-def extract_xml_links_from_docviewer(session, bill_number):
+def extract_xml_links_from_docviewer(session, bill_number, cache_dir=None):
     """Scrape first-reading page to find all available stages and their XML/HTML document links."""
     first_reading_url = f"{DOC_VIEWER_BASE}/en/{session}/bill/{bill_number}/first-reading"
+    fr_cache_path = None
+    if cache_dir:
+        fr_cache_path = os.path.join(cache_dir, "docviewer", session, f"{bill_number}_first-reading.html")
 
     try:
-        response = requests.get(first_reading_url)
-        if response.status_code != 200:
+        fr_text = fetch_url_with_cache(first_reading_url, fr_cache_path)
+        if not fr_text:
             return {}, {}
 
-        soup = BeautifulSoup(response.text, "html.parser")
+        soup = BeautifulSoup(fr_text, "html.parser")
 
         # Find all available publication tabs
         tabs = soup.select(".publication-tabs .nav-tab a")
@@ -200,13 +230,17 @@ def extract_xml_links_from_docviewer(session, bill_number):
             stage_url = f"{DOC_VIEWER_BASE}/en/{session}/bill/{bill_number}/{slug}"
             html_links[slug] = stage_url
 
-            res = requests.get(stage_url)
-            if res.status_code == 200:
-                xml_match = re.search(r'href=["\'](/Content/Bills/[^"\']+_E\.xml)["\']', res.text)
+            s_cache_path = None
+            if cache_dir:
+                s_cache_path = os.path.join(cache_dir, "docviewer", session, f"{bill_number}_{slug}.html")
+
+            s_text = fetch_url_with_cache(stage_url, s_cache_path)
+            if s_text:
+                xml_match = re.search(r'href=["\'](/Content/Bills/[^"\']+_E\.xml)["\']', s_text)
                 if xml_match:
                     xml_links[slug] = f"https://www.parl.ca{xml_match.group(1)}"
                 else:
-                    generic_xml_match = re.search(r'href=["\'](/Content/Bills/[^"\']+\.xml)["\']', res.text)
+                    generic_xml_match = re.search(r'href=["\'](/Content/Bills/[^"\']+\.xml)["\']', s_text)
                     if generic_xml_match:
                         xml_links[slug] = f"https://www.parl.ca{generic_xml_match.group(1)}"
 
@@ -216,7 +250,9 @@ def extract_xml_links_from_docviewer(session, bill_number):
         return {}, {}
 
 
-def scrape_bill(session, bill_number, cache_bill_dir, repo_path, already_downloaded_stages, dry_run=False):
+def scrape_bill(
+    session, bill_number, cache_bill_dir, repo_path, already_downloaded_stages, dry_run=False, cache_dir=None
+):
     """Scrape detailed bill metadata and draft texts sequentially into cache, returning pending commits."""
     os.makedirs(cache_bill_dir, exist_ok=True)
     metadata_path = os.path.join(cache_bill_dir, "metadata.xml")
@@ -224,17 +260,21 @@ def scrape_bill(session, bill_number, cache_bill_dir, repo_path, already_downloa
 
     # 1. Fetch detailed metadata XML
     detail_url = f"{LEGISINFO_BASE}/en/bill/{session}/{bill_number}/xml"
+    meta_cache_path = None
+    if cache_dir:
+        meta_cache_path = os.path.join(cache_dir, "metadata", session, f"{bill_number}.xml")
+
     try:
-        response = requests.get(detail_url)
-        if response.status_code == 200:
+        response_text = fetch_url_with_cache(detail_url, meta_cache_path)
+        if response_text:
             if not dry_run:
                 with open(metadata_path, "w", encoding="utf-8") as f:
-                    f.write(response.text)
+                    f.write(response_text)
                 summary_md = make_summary_markdown(metadata_path)
                 with open(summary_path, "w", encoding="utf-8") as f:
                     f.write(summary_md)
         else:
-            log_message(f"    Failed to fetch detailed XML for {bill_number} (status {response.status_code})")
+            log_message(f"    Failed to fetch detailed XML for {bill_number}")
             return False, already_downloaded_stages, "Parliament of Canada", "sponsor@parl.gc.ca", []
     except Exception as e:
         log_message(f"    Error fetching metadata for {bill_number}: {e}")
@@ -256,7 +296,7 @@ def scrape_bill(session, bill_number, cache_bill_dir, repo_path, already_downloa
     author_email = generate_sponsor_email(sponsor_name)
 
     # 2. Find available stage text documents from DocumentViewer
-    xml_links, html_links = extract_xml_links_from_docviewer(session, bill_number)
+    xml_links, html_links = extract_xml_links_from_docviewer(session, bill_number, cache_dir=cache_dir)
     available_stages = set(xml_links.keys()) | set(html_links.keys())
 
     # Filter to stages not yet downloaded in this session
@@ -286,8 +326,12 @@ def scrape_bill(session, bill_number, cache_bill_dir, repo_path, already_downloa
 
         try:
             if is_xml:
-                res = requests.get(url)
-                if res.status_code == 200:
+                st_cache_path = None
+                if cache_dir:
+                    st_cache_path = os.path.join(cache_dir, "stages", session, bill_number, f"{slug}.xml")
+
+                res_text = fetch_url_with_cache(url, st_cache_path)
+                if res_text:
                     current_stages.add(slug)
 
                     stage_xml_path = os.path.join(stages_cache_dir, f"{slug}.xml")
@@ -295,20 +339,20 @@ def scrape_bill(session, bill_number, cache_bill_dir, repo_path, already_downloa
 
                     if not dry_run:
                         with open(stage_xml_path, "w", encoding="utf-8") as f:
-                            f.write(res.text)
+                            f.write(res_text)
                         try:
-                            root = ET.fromstring(res.content)
+                            root = ET.fromstring(res_text.encode("utf-8"))
                             md_content = xml_to_markdown(root)
                             with open(stage_md_path, "w", encoding="utf-8") as md_f:
                                 md_f.write(md_content)
                         except Exception as parse_err:
                             log_message(f"      Failed to parse XML to Markdown: {parse_err}")
                 else:
-                    log_message(f"      Failed to download XML (status {res.status_code})")
+                    log_message(f"      Failed to download XML: {url}")
                     continue
             else:
                 # HTML Fallback
-                md_content = scrape_html_bill_text(session, bill_number, slug)
+                md_content = scrape_html_bill_text(session, bill_number, slug, cache_dir=cache_dir)
                 if md_content:
                     current_stages.add(slug)
 
@@ -364,16 +408,19 @@ def scrape_bill(session, bill_number, cache_bill_dir, repo_path, already_downloa
             log_message(f"    Restoring sequential text files from latest stage ({latest_slug}) via {source_type}...")
             try:
                 if is_xml:
-                    res = requests.get(url)
-                    if res.status_code == 200 and not dry_run:
+                    st_cache_path = None
+                    if cache_dir:
+                        st_cache_path = os.path.join(cache_dir, "stages", session, bill_number, f"{latest_slug}.xml")
+                    res_text = fetch_url_with_cache(url, st_cache_path)
+                    if res_text and not dry_run:
                         with open(os.path.join(cache_bill_dir, "bill_text.xml"), "w", encoding="utf-8") as f:
-                            f.write(res.text)
-                        root = ET.fromstring(res.content)
+                            f.write(res_text)
+                        root = ET.fromstring(res_text.encode("utf-8"))
                         md_content = xml_to_markdown(root)
                         with open(os.path.join(cache_bill_dir, "bill_text.md"), "w", encoding="utf-8") as md_f:
                             md_f.write(md_content)
                 else:
-                    md_content = scrape_html_bill_text(session, bill_number, latest_slug)
+                    md_content = scrape_html_bill_text(session, bill_number, latest_slug, cache_dir=cache_dir)
                     if md_content and not dry_run:
                         stub_xml = (
                             f"<Bill><Source>HTML Fallback</Source><Session>{session}</Session>"
