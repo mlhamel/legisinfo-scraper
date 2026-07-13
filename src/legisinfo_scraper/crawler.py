@@ -15,7 +15,7 @@ from .parser import (
 )
 
 def clean_html_to_markdown(soup_node):
-    """Clean DocumentViewer HTML block and format it into clean Markdown."""
+    """Clean DocumentViewer HTML block and format it into clean Markdown recursively."""
     # Decompose navigation, headers, footers, accessible notice
     for elem in soup_node.find_all(class_=lambda c: c and any(x in c.lower() for x in ("navigation", "header", "footer", "toc", "option"))):
         elem.decompose()
@@ -26,29 +26,82 @@ def clean_html_to_markdown(soup_node):
         if any(x in text for x in ("next page", "previous page", "table of contents", "accessible@parl.gc.ca")):
             link.decompose()
             
-    # Convert remaining structure
-    lines = []
-    for child in soup_node.descendants:
-        if child.name in ("h1", "h2", "h3", "h4"):
-            text = " ".join(child.get_text().split())
-            if text:
-                level = int(child.name[1])
-                lines.append(f"\n\n{'#' * level} {text}\n\n")
-        elif child.name == "p":
-            text = " ".join(child.get_text().split())
-            if text:
-                lines.append(f"{text}\n\n")
-        elif isinstance(child, NavigableString):
-            text = child.strip()
-            # Avoid duplicating text that is already inside children
-            if text and child.parent.name not in ("p", "h1", "h2", "h3", "h4", "a", "div", "span"):
-                lines.append(f"{text}\n\n")
-                
-    # Fallback to simple get_text if we ended up empty
-    text = "".join(lines).strip()
-    if not text:
-        text = soup_node.get_text()
+    # Recursive DOM renderer
+    def render_node(node):
+        if isinstance(node, NavigableString):
+            return node.string or ""
+            
+        if not node.name:
+            return ""
+            
+        if node.name in ("style", "script", "head", "meta", "link"):
+            return ""
+            
+        # Render child nodes recursively
+        children_text = "".join(render_node(child) for child in node.children)
         
+        if node.name in ("h1", "h2", "h3", "h4"):
+            text = " ".join(children_text.split()).strip()
+            if text:
+                level = int(node.name[1])
+                return f"\n\n{'#' * level} {text}\n\n"
+            return ""
+            
+        elif node.name == "p":
+            text = " ".join(children_text.split()).strip()
+            if text:
+                return f"\n\n{text}\n\n"
+            return ""
+            
+        elif node.name == "br":
+            return "\n"
+            
+        elif node.name in ("b", "strong"):
+            text = children_text.strip()
+            if text:
+                return f"**{text}**"
+            return ""
+            
+        elif node.name in ("i", "em"):
+            text = children_text.strip()
+            if text:
+                return f"*{text}*"
+            return ""
+            
+        elif node.name == "li":
+            text = " ".join(children_text.split()).strip()
+            if text:
+                return f"\n* {text}"
+            return ""
+            
+        elif node.name in ("ul", "ol"):
+            return f"\n{children_text}\n"
+            
+        elif node.name == "blockquote":
+            lines = [f"> {line}" for line in children_text.splitlines() if line.strip()]
+            return "\n\n" + "\n".join(lines) + "\n\n"
+            
+        elif node.name == "table":
+            rows = []
+            cols_count = 0
+            for tr in node.find_all("tr", recursive=False):
+                cols = [" ".join(td.get_text().split()).strip() for td in tr.find_all(["td", "th"], recursive=False)]
+                if any(cols):
+                    rows.append("| " + " | ".join(cols) + " |")
+                    cols_count = max(cols_count, len(cols))
+            if rows:
+                sep = "| " + " | ".join("---" for _ in range(cols_count)) + " |"
+                rows.insert(1, sep)
+                return "\n\n" + "\n".join(rows) + "\n\n"
+            return ""
+            
+        elif node.name in ("div", "span", "td", "tr", "th", "tbody"):
+            return children_text
+            
+        return children_text
+
+    text = render_node(soup_node)
+    
     # Clean up empty lines/duplicates
     cleaned_lines = []
     for line in text.split("\n"):
@@ -58,7 +111,7 @@ def clean_html_to_markdown(soup_node):
         elif cleaned_lines and cleaned_lines[-1] != "":
             cleaned_lines.append("")
             
-    return "\n".join(cleaned_lines)
+    return "\n".join(cleaned_lines).strip()
 
 def scrape_html_bill_text(session, bill_number, slug):
     """Scrape and assemble all pages of the bill text from DocumentViewer HTML, returning markdown."""
