@@ -8,5 +8,5 @@ STAGE_DETAILS = {
     "second-reading": ("Second Reading", 2),
     "committee": ("Committee stage", 3),
     "third-reading": ("Third Reading", 4),
-    "royal-assent": ("Royal Assent", 5)
+    "royal-assent": ("Royal Assent", 5),
 }

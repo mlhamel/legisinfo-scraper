@@ -1,6 +1,6 @@
 [project]
 name = "legisinfo-scraper"
-version = "0.1.0"
+version = "0.2.0"
 description = "Scraper for Canadian parliamentary bill data, committing updates to a Git repository."
 readme = "README.md"
 license = { text = "MIT" }
@@ -16,6 +16,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
+    "ruff>=0.3.0",
+    "pre-commit>=3.5.0",
 ]
 
 [project.urls]
@@ -28,6 +30,35 @@ legisinfo-scraper = "legisinfo_scraper.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/legisinfo_scraper"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort (import sorting)
+    "C90", # mccabe complexity
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "A",   # flake8-builtins
+    "C4",  # flake8-comprehensions
+    "T10", # flake8-debugger
+    "T20", # flake8-print
+    "ARG", # flake8-unused-arguments
+    "PT",  # flake8-pytest-style
+    "RET", # flake8-return
+    "SIM", # flake8-simplify
+    "RUF", # Ruff-specific rules
+]
+ignore = ["C901"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
 
 [build-system]
 requires = ["hatchling"]

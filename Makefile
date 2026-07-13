@@ -16,17 +16,20 @@ else
   LIMIT_ARG =
 endif
 
-.PHONY: help install test build run status clean
+.PHONY: help install test build run status lint format pre-commit-install reset clean
 
 help:
 	@echo "Available Makefile targets:"
-	@echo "  install   Install dependencies and package in editable mode"
-	@echo "  test      Run the integration test suite"
-	@echo "  build     Build the source distribution and wheel"
-	@echo "  run       Run the scraper locally (usage: make run REPO=/path/to/repo [SESSION=all|45-1] [LIMIT=10])"
-	@echo "  status    Show status of all scraped sessions (usage: make status REPO=/path/to/repo)"
-	@echo "  reset     Show instructions for wiping and resetting the target repository"
-	@echo "  clean     Remove temporary files and build artifacts"
+	@echo "  install            Install dependencies and package in editable mode"
+	@echo "  test               Run the integration test suite"
+	@echo "  build              Build the source distribution and wheel"
+	@echo "  run                Run the scraper locally (usage: make run REPO=/path/to/repo [SESSION=all|45-1] [LIMIT=10])"
+	@echo "  status             Show status of all scraped sessions (usage: make status REPO=/path/to/repo)"
+	@echo "  lint               Run Ruff linter checks"
+	@echo "  format             Run Ruff formatter"
+	@echo "  pre-commit-install Install pre-commit git hooks locally"
+	@echo "  reset              Show instructions for wiping and resetting the target repository"
+	@echo "  clean              Remove temporary files and build artifacts"
 
 install:
 	uv sync --extra dev
@@ -42,6 +45,15 @@ run:
 
 status:
 	uv run python report_status.py --repo $(REPO)
+
+lint:
+	uv run ruff check .
+
+format:
+	uv run ruff format .
+
+pre-commit-install:
+	uv run pre-commit install
 
 reset:
 	@if [ ! -d "$(REPO)/.git" ]; then echo "Error: $(REPO) is not a git repository."; exit 1; fi

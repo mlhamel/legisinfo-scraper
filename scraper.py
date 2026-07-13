@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-import sys
 import os
+import sys
 
 # Add the src folder to path so we can resolve legisinfo_scraper package
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
