@@ -449,7 +449,7 @@ def scrape_bill(
     restore_xml = os.path.join(cache_bill_dir, "bill_text.xml")
     restore_md = os.path.join(cache_bill_dir, "bill_text.md")
 
-    pending_bill = MetadataPendingBill(
+    meta_pending_bill = MetadataPendingBill(
         session=session,
         bill_number=bill_number,
         event_date=event_date,
@@ -461,7 +461,7 @@ def scrape_bill(
         restore_md_path=restore_md if os.path.exists(restore_md) else None,
     )
 
-    pending_commits.append(pending_bill)
+    pending_commits.append(meta_pending_bill)
 
     return ScrapeResult(
         success=True,

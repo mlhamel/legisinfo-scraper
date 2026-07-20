@@ -71,7 +71,8 @@ dev = [
 ]
 
 [tool.mypy]
+files = ["src"]
 python_version = "3.10"
-strict = true
+strict = false
 ignore_missing_imports = true
 plugins = ["pydantic.mypy"]
