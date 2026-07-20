@@ -27,7 +27,7 @@ def parse_event_date(date_str):
 
 
 def get_commit_sort_key(commit):
-    date_val = commit.get("stage_date") or commit.get("event_date")
+    date_val = getattr(commit, "stage_date", None) or getattr(commit, "event_date", None)
     return parse_event_date(date_val)
 
 
@@ -218,7 +218,7 @@ def main():
 
                         cache_bill_dir = os.path.join(temp_dir, session_code, bill_number)
                         stages_to_pass = set() if args.force else already_downloaded_stages
-                        success, updated_stages, author_name, author_email, bill_commits = scrape_bill(
+                        result = scrape_bill(
                             session_code,
                             bill_number,
                             cache_bill_dir,
@@ -228,15 +228,15 @@ def main():
                             args.cache_dir,
                         )
 
-                        if success:
+                        if result.success:
                             all_bills_data[bill_number] = {
                                 "title": title,
                                 "status": status,
                                 "activity": activity,
-                                "stages": updated_stages,
+                                "stages": list(result.updated_stages),
                                 "last_checked": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             }
-                            all_pending_commits.extend(bill_commits)
+                            all_pending_commits.extend(result.pending_commits)
 
                         processed += 1
                         print_progress(processed, total_to_process, bill_number, "Completed scraping")
@@ -253,26 +253,26 @@ def main():
         rebase_needed = False
 
         for commit in all_pending_commits:
-            session_code = commit["session"]
-            bill_number = commit["bill_number"]
-            author_name = commit["author_name"]
-            author_email = commit["author_email"]
+            session_code = commit.session
+            bill_number = commit.bill_number
+            author_name = commit.author_name
+            author_email = commit.author_email
 
             bill_dir = os.path.join(args.repo, session_code, "bills", bill_number)
             os.makedirs(bill_dir, exist_ok=True)
 
-            if commit["type"] == "stage":
-                stage_name = commit["stage_name"]
-                stage_date = commit["stage_date"]
+            if commit.type == "stage":
+                stage_name = commit.stage_name
+                stage_date = commit.stage_date
                 if stage_date and stage_date.startswith("0001-01-01"):
                     stage_date = None
 
                 # Copy cached files to target repo
-                shutil.copy2(commit["stage_xml_path"], os.path.join(bill_dir, "bill_text.xml"))
-                if os.path.exists(commit["stage_md_path"]):
-                    shutil.copy2(commit["stage_md_path"], os.path.join(bill_dir, "bill_text.md"))
-                shutil.copy2(commit["metadata_xml_path"], os.path.join(bill_dir, "metadata.xml"))
-                shutil.copy2(commit["summary_md_path"], os.path.join(bill_dir, "summary.md"))
+                shutil.copy2(commit.stage_xml_path, os.path.join(bill_dir, "bill_text.xml"))
+                if os.path.exists(commit.stage_md_path):
+                    shutil.copy2(commit.stage_md_path, os.path.join(bill_dir, "bill_text.md"))
+                shutil.copy2(commit.metadata_xml_path, os.path.join(bill_dir, "metadata.xml"))
+                shutil.copy2(commit.summary_md_path, os.path.join(bill_dir, "summary.md"))
 
                 if not args.dry_run:
                     # Stage files in git
@@ -290,7 +290,7 @@ def main():
 
                     diff_staged = run_command(["git", "diff", "--cached", "--quiet"], cwd=args.repo)
                     if diff_staged.returncode != 0:
-                        event_id = f"{session_code}/{bill_number}/{commit['slug']}"
+                        event_id = f"{session_code}/{bill_number}/{commit.slug}"
                         commit_msg = f"Bill {bill_number}: {stage_name} text update\n\nLegisinfo-Event: {event_id}"
 
                         existing_hash = find_commit_by_event_id(event_id, args.repo)
@@ -309,19 +309,19 @@ def main():
                             run_git_commit(commit_msg, stage_date, args.repo, author_name, author_email)
                             committed_count += 1
 
-            elif commit["type"] == "metadata":
-                event_date = commit["event_date"]
+            elif commit.type == "metadata":
+                event_date = commit.event_date
                 if event_date and event_date.startswith("0001-01-01"):
                     event_date = None
 
-                shutil.copy2(commit["metadata_xml_path"], os.path.join(bill_dir, "metadata.xml"))
-                shutil.copy2(commit["summary_md_path"], os.path.join(bill_dir, "summary.md"))
+                shutil.copy2(commit.metadata_xml_path, os.path.join(bill_dir, "metadata.xml"))
+                shutil.copy2(commit.summary_md_path, os.path.join(bill_dir, "summary.md"))
 
                 # If there are restored files, copy them as well
-                if commit.get("restore_xml_path"):
-                    shutil.copy2(commit["restore_xml_path"], os.path.join(bill_dir, "bill_text.xml"))
-                if commit.get("restore_md_path"):
-                    shutil.copy2(commit["restore_md_path"], os.path.join(bill_dir, "bill_text.md"))
+                if commit.restore_xml_path:
+                    shutil.copy2(commit.restore_xml_path, os.path.join(bill_dir, "bill_text.xml"))
+                if commit.restore_md_path:
+                    shutil.copy2(commit.restore_md_path, os.path.join(bill_dir, "bill_text.md"))
 
                 if not args.dry_run:
                     git_add_args = [
@@ -330,9 +330,9 @@ def main():
                         f"{session_code}/bills/{bill_number}/metadata.xml",
                         f"{session_code}/bills/{bill_number}/summary.md",
                     ]
-                    if commit.get("restore_xml_path"):
+                    if commit.restore_xml_path:
                         git_add_args.append(f"{session_code}/bills/{bill_number}/bill_text.xml")
-                    if commit.get("restore_md_path"):
+                    if commit.restore_md_path:
                         git_add_args.append(f"{session_code}/bills/{bill_number}/bill_text.md")
 
                     run_command(git_add_args, cwd=args.repo)

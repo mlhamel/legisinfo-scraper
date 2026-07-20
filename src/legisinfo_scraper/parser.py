@@ -191,7 +191,7 @@ def get_stage_date_from_xml(metadata_path, slug):
     return None
 
 
-def get_latest_event_date_from_xml(metadata_path):
+def get_latest_event_date_from_xml(metadata_path) -> str | None:
     """Get the latest bill event date from metadata XML."""
     if not os.path.exists(metadata_path):
         return None

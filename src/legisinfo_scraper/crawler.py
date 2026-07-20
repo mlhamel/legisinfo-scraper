@@ -13,6 +13,7 @@ from .parser import (
     make_summary_markdown,
     xml_to_markdown,
 )
+from .schemas import MetadataPendingBill, ScrapeResult, StagePendingBill
 from .utils import clean_sponsor_name, generate_sponsor_email, log_message
 
 
@@ -252,7 +253,7 @@ def extract_xml_links_from_docviewer(session, bill_number, cache_dir=None):
 
 def scrape_bill(
     session, bill_number, cache_bill_dir, repo_path, already_downloaded_stages, dry_run=False, cache_dir=None
-):
+) -> ScrapeResult:
     """Scrape detailed bill metadata and draft texts sequentially into cache, returning pending commits."""
     os.makedirs(cache_bill_dir, exist_ok=True)
     metadata_path = os.path.join(cache_bill_dir, "metadata.xml")
@@ -275,10 +276,22 @@ def scrape_bill(
                     f.write(summary_md)
         else:
             log_message(f"    Failed to fetch detailed XML for {bill_number}")
-            return False, already_downloaded_stages, "Parliament of Canada", "sponsor@parl.gc.ca", []
+            return ScrapeResult(
+                success=False,
+                updated_stages=set(already_downloaded_stages),
+                author_name="Parliament of Canada",
+                author_email="sponsor@parl.gc.ca",
+                pending_commits=[],
+            )
     except Exception as e:
         log_message(f"    Error fetching metadata for {bill_number}: {e}")
-        return False, already_downloaded_stages, "Parliament of Canada", "sponsor@parl.gc.ca", []
+        return ScrapeResult(
+            success=False,
+            updated_stages=set(already_downloaded_stages),
+            author_name="Parliament of Canada",
+            author_email="sponsor@parl.gc.ca",
+            pending_commits=[],
+        )
 
     # Parse sponsor details from the newly downloaded metadata.xml
     sponsor_name = "Parliament of Canada"
@@ -309,7 +322,7 @@ def scrape_bill(
     stages_to_download.sort(key=lambda s: get_stage_info(s)[1])
 
     current_stages = set(already_downloaded_stages)
-    pending_commits = []
+    pending_commits: list[StagePendingBill | MetadataPendingBill] = []
 
     # Create subfolder in cache for stage-specific drafts
     stages_cache_dir = os.path.join(cache_bill_dir, "stages")
@@ -377,22 +390,20 @@ def scrape_bill(
             if not stage_date:
                 stage_date = get_latest_event_date_from_xml(metadata_path)
 
-            pending_commits.append(
-                {
-                    "type": "stage",
-                    "session": session,
-                    "bill_number": bill_number,
-                    "slug": slug,
-                    "stage_name": stage_name,
-                    "stage_date": stage_date,
-                    "author_name": author_name,
-                    "author_email": author_email,
-                    "stage_xml_path": stage_xml_path,
-                    "stage_md_path": stage_md_path,
-                    "metadata_xml_path": metadata_path,
-                    "summary_md_path": summary_path,
-                }
+            pending_bill = StagePendingBill(
+                session=session,
+                bill_number=bill_number,
+                slug=slug,
+                stage_name=stage_name,
+                stage_date=stage_date,
+                author_name=author_name,
+                author_email=author_email,
+                stage_xml_path=stage_xml_path,
+                stage_md_path=stage_md_path,
+                metadata_xml_path=metadata_path,
+                summary_md_path=summary_path,
             )
+            pending_commits.append(pending_bill)
         except Exception as e:
             log_message(f"      Error: {e}")
 
@@ -438,19 +449,24 @@ def scrape_bill(
     restore_xml = os.path.join(cache_bill_dir, "bill_text.xml")
     restore_md = os.path.join(cache_bill_dir, "bill_text.md")
 
-    pending_commits.append(
-        {
-            "type": "metadata",
-            "session": session,
-            "bill_number": bill_number,
-            "event_date": event_date,
-            "author_name": author_name,
-            "author_email": author_email,
-            "metadata_xml_path": metadata_path,
-            "summary_md_path": summary_path,
-            "restore_xml_path": restore_xml if os.path.exists(restore_xml) else None,
-            "restore_md_path": restore_md if os.path.exists(restore_md) else None,
-        }
+    pending_bill = MetadataPendingBill(
+        session=session,
+        bill_number=bill_number,
+        event_date=event_date,
+        author_name=author_name,
+        author_email=author_email,
+        metadata_xml_path=metadata_path,
+        summary_md_path=summary_path,
+        restore_xml_path=restore_xml if os.path.exists(restore_xml) else None,
+        restore_md_path=restore_md if os.path.exists(restore_md) else None,
     )
 
-    return True, current_stages, author_name, author_email, pending_commits
+    pending_commits.append(pending_bill)
+
+    return ScrapeResult(
+        success=True,
+        updated_stages=current_stages,
+        author_name=author_name,
+        author_email=author_email,
+        pending_commits=pending_commits,
+    )
