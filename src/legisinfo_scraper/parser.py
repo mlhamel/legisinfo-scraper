@@ -1,7 +1,9 @@
 import os
+import sys
 import xml.etree.ElementTree as ET
 
 from .config import STAGE_DETAILS
+from .utils import fix_mojibake
 
 
 def get_stage_info(slug):
@@ -14,21 +16,25 @@ def get_stage_info(slug):
 
 def clean_inline_text(elem):
     """Recursively reconstructs inline text, formatting tags like Ins, DefinedTermEn, Emphasis."""
-    text = elem.text or ""
-    for child in elem:
-        child_text = clean_inline_text(child)
-        tag = child.tag
-        if tag in ("DefinedTermEn", "DefinedTermFr", "Ins", "ins"):
-            text += f"**{child_text}**"
-        elif tag == "Emphasis":
-            text += f"*{child_text}*"
-        elif tag in ("XRefExternal", "XRefInternal"):
-            text += f"`{child_text}`"
-        else:
-            text += child_text
-        if child.tail:
-            text += child.tail
-    return text.strip()
+    sys.setrecursionlimit(max(sys.getrecursionlimit(), 25000))
+    try:
+        text = elem.text or ""
+        for child in elem:
+            child_text = clean_inline_text(child)
+            tag = child.tag
+            if tag in ("DefinedTermEn", "DefinedTermFr", "Ins", "ins"):
+                text += f"**{child_text}**"
+            elif tag == "Emphasis":
+                text += f"*{child_text}*"
+            elif tag in ("XRefExternal", "XRefInternal"):
+                text += f"`{child_text}`"
+            else:
+                text += child_text
+            if child.tail:
+                text += child.tail
+        return fix_mojibake(text.strip())
+    except RecursionError:
+        return fix_mojibake("".join(elem.itertext()).strip())
 
 
 def xml_to_markdown(elem, indent=""):
@@ -94,7 +100,7 @@ def xml_to_markdown(elem, indent=""):
         for child in elem:
             lines.append(xml_to_markdown(child, indent))
 
-    return "".join(lines)
+    return fix_mojibake("".join(lines))
 
 
 def clean_date_str(date_str):
@@ -113,10 +119,10 @@ def make_summary_markdown(bill_xml_path):
             bill_node = root
 
         bill_num = bill_node.findtext("NumberCode") or ""
-        title_en = bill_node.findtext("LongTitleEn") or ""
-        status_en = bill_node.findtext("StatusNameEn") or ""
-        sponsor = bill_node.findtext("SponsorPersonName") or ""
-        activity_en = bill_node.findtext("LatestBillEventTypeName") or ""
+        title_en = fix_mojibake(bill_node.findtext("LongTitleEn") or "")
+        status_en = fix_mojibake(bill_node.findtext("StatusNameEn") or "")
+        sponsor = fix_mojibake(bill_node.findtext("SponsorPersonName") or "")
+        activity_en = fix_mojibake(bill_node.findtext("LatestBillEventTypeName") or "")
         activity_dt = clean_date_str(bill_node.findtext("LatestBillEventDateTime"))
 
         md = []
@@ -136,20 +142,20 @@ def make_summary_markdown(bill_xml_path):
         # House stages
         house_stages = bill_node.findall(".//HouseBillStages/*")
         for stage in house_stages:
-            name = stage.findtext("BillStageNameEn") or ""
-            state = stage.findtext("StateNameEn") or ""
+            name = fix_mojibake(stage.findtext("BillStageNameEn") or "")
+            state = fix_mojibake(stage.findtext("StateNameEn") or "")
             dt = clean_date_str(stage.findtext("LastStageEventStartDateTime"))
             md.append(f"| House of Commons | {name} | {state} | {dt} |\n")
 
         # Senate stages
         senate_stages = bill_node.findall(".//SenateBillStages/*")
         for stage in senate_stages:
-            name = stage.findtext("BillStageNameEn") or ""
-            state = stage.findtext("StateNameEn") or ""
+            name = fix_mojibake(stage.findtext("BillStageNameEn") or "")
+            state = fix_mojibake(stage.findtext("StateNameEn") or "")
             dt = clean_date_str(stage.findtext("LastStageEventStartDateTime"))
             md.append(f"| Senate | {name} | {state} | {dt} |\n")
 
-        return "".join(md)
+        return fix_mojibake("".join(md))
     except Exception as e:
         return f"# Summary Generation Failed\n\nError parsing metadata: {e}"
 

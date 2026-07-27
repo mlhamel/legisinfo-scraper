@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import xml.etree.ElementTree as ET
 
 import requests
@@ -14,23 +15,25 @@ from .parser import (
     xml_to_markdown,
 )
 from .schemas import MetadataPendingBill, ScrapeResult, StagePendingBill
-from .utils import clean_sponsor_name, generate_sponsor_email, log_message
+from .utils import clean_sponsor_name, fix_mojibake, generate_sponsor_email, log_message
 
 
 def fetch_url_with_cache(url, cache_path=None):
     """Fetch URL contents, using a local cache file if cache_path is specified."""
     if cache_path and os.path.exists(cache_path):
         with open(cache_path, encoding="utf-8") as f:
-            return f.read()
+            return fix_mojibake(f.read())
 
     try:
         res = requests.get(url, timeout=30)
         if res.status_code == 200:
+            res.encoding = "utf-8"
+            text = fix_mojibake(res.text)
             if cache_path:
                 os.makedirs(os.path.dirname(cache_path), exist_ok=True)
                 with open(cache_path, "w", encoding="utf-8") as f:
-                    f.write(res.text)
-            return res.text
+                    f.write(text)
+            return text
     except Exception as e:
         log_message(f"    Error fetching URL {url}: {e}")
     return None
@@ -38,6 +41,7 @@ def fetch_url_with_cache(url, cache_path=None):
 
 def clean_html_to_markdown(soup_node):
     """Clean DocumentViewer HTML block and format it into clean Markdown recursively."""
+    sys.setrecursionlimit(max(sys.getrecursionlimit(), 25000))
 
     # Decompose navigation, headers, footers, accessible notice
     def is_noise_class(c):
@@ -126,7 +130,16 @@ def clean_html_to_markdown(soup_node):
 
         return children_text
 
-    text = render_node(soup_node)
+    try:
+        text = render_node(soup_node)
+    except RecursionError:
+        # Fallback for ultra-deep DOM trees that exceed recursion stack limit
+        lines = []
+        for elem in soup_node.find_all(["h1", "h2", "h3", "h4", "p", "li", "tr", "td", "div"]):
+            elem_text = " ".join(elem.get_text().split()).strip()
+            if elem_text and (not lines or lines[-1] != elem_text):
+                lines.append(elem_text)
+        text = "\n\n".join(lines)
 
     # Clean up empty lines/duplicates
     cleaned_lines = []
@@ -137,7 +150,7 @@ def clean_html_to_markdown(soup_node):
         elif cleaned_lines and cleaned_lines[-1] != "":
             cleaned_lines.append("")
 
-    return "\n".join(cleaned_lines).strip()
+    return fix_mojibake("\n".join(cleaned_lines).strip())
 
 
 def scrape_html_bill_text(session, bill_number, slug, cache_dir=None):
@@ -191,7 +204,7 @@ def scrape_html_bill_text(session, bill_number, slug, cache_dir=None):
             if content_div:
                 text_blocks.append(clean_html_to_markdown(content_div))
 
-        return "\n\n".join(text_blocks)
+        return fix_mojibake("\n\n".join(text_blocks))
     except Exception as e:
         log_message(f"      Error scraping HTML bill text: {e}")
         return ""

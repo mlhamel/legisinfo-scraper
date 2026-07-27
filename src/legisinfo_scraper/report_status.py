@@ -6,6 +6,7 @@ import requests
 
 from .config import LEGISINFO_BASE
 from .index_manager import parse_readme_index
+from .utils import fix_mojibake
 
 
 def report_status(repo_path):
@@ -15,7 +16,8 @@ def report_status(repo_path):
         res = requests.get(url, timeout=30)
         if res.status_code != 200:
             sys.exit(1)
-        root = ET.fromstring(res.content)
+        res.encoding = "utf-8"
+        root = ET.fromstring(fix_mojibake(res.text).encode("utf-8"))
     except Exception:
         sys.exit(1)
 

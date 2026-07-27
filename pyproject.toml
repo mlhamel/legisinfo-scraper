@@ -1,6 +1,6 @@
 [project]
 name = "legisinfo-scraper"
-version = "0.2.0"
+version = "0.3.0"
 description = "Scraper for Canadian parliamentary bill data, committing updates to a Git repository."
 readme = "README.md"
 license = { text = "MIT" }
@@ -12,6 +12,7 @@ dependencies = [
     "requests>=2.31.0",
     "beautifulsoup4>=4.12.0",
     "pydantic>=2.0.0",
+    "ftfy>=6.0.0",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +29,7 @@ Issues = "https://github.com/mlhamel/legisinfo-scraper/issues"
 
 [project.scripts]
 legisinfo-scraper = "legisinfo_scraper.cli:main"
+legisinfo-fix-encoding = "legisinfo_scraper.cli:fix_encoding_main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/legisinfo_scraper"]

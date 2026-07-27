@@ -2,7 +2,7 @@ import os
 import re
 from datetime import datetime
 
-from .utils import log_message
+from .utils import fix_mojibake, log_message
 
 
 def parse_readme_index(readme_path):
@@ -31,9 +31,9 @@ def parse_readme_index(readme_path):
             )
             if match:
                 bill_num = match.group(1).strip()
-                title = " ".join(match.group(2).split())
-                status = " ".join(match.group(3).split())
-                activity = " ".join(match.group(4).split())
+                title = fix_mojibake(" ".join(match.group(2).split()))
+                status = fix_mojibake(" ".join(match.group(3).split()))
+                activity = fix_mojibake(" ".join(match.group(4).split()))
                 stages_str = match.group(5).strip()
                 checked = match.group(6).strip()
 
@@ -82,9 +82,9 @@ def save_readme_index(readme_path, all_bills_data, session):
 
     for bill_num in sorted(all_bills_data.keys(), key=sort_key):
         b = all_bills_data[bill_num]
-        title = b.get("title", "").replace("|", "\\|")
-        status = b.get("status", "").replace("|", "\\|")
-        activity = b.get("activity", "").replace("|", "\\|")
+        title = fix_mojibake(b.get("title", "")).replace("|", "\\|")
+        status = fix_mojibake(b.get("status", "")).replace("|", "\\|")
+        activity = fix_mojibake(b.get("activity", "")).replace("|", "\\|")
         stages_str = ", ".join(f"`{s}`" for s in sorted(b.get("stages", []))) if b.get("stages") else "None"
         checked = b.get("last_checked", now_str)
 

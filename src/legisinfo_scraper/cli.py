@@ -11,7 +11,7 @@ from .config import LEGISINFO_BASE
 from .crawler import scrape_bill
 from .git_utils import find_commit_by_event_id, run_command, run_git_autosquash, run_git_commit, run_git_fixup
 from .index_manager import migrate_existing_index, parse_readme_index, save_readme_index, update_root_readme
-from .utils import log_message, print_progress
+from .utils import fix_mojibake, log_message, print_progress
 
 
 def parse_event_date(date_str):
@@ -47,6 +47,9 @@ def main():
 
     args = parser.parse_args()
 
+    if args.session and args.session.lower() in ("active", "none"):
+        args.session = None
+
     if not os.path.exists(args.repo):
         sys.exit(1)
 
@@ -65,8 +68,8 @@ def main():
         res = requests.get(list_url)
         if res.status_code != 200:
             sys.exit(1)
-
-        root = ET.fromstring(res.content)
+        res.encoding = "utf-8"
+        root = ET.fromstring(fix_mojibake(res.text).encode("utf-8"))
     except Exception:
         sys.exit(1)
 
@@ -165,9 +168,9 @@ def main():
 
                 processed = 0
                 for bill_number, bill_node in bills_to_process:
-                    status = " ".join((bill_node.findtext("CurrentStatusEn") or "").split())
-                    activity = " ".join((bill_node.findtext("LatestActivityEn") or "").split())
-                    title = " ".join((bill_node.findtext("LongTitleEn") or "").split())
+                    status = fix_mojibake(" ".join((bill_node.findtext("CurrentStatusEn") or "").split()))
+                    activity = fix_mojibake(" ".join((bill_node.findtext("LatestActivityEn") or "").split()))
+                    title = fix_mojibake(" ".join((bill_node.findtext("LongTitleEn") or "").split()))
 
                     # Check for skip/resume optimization
                     existing = index_data.get(bill_number)
@@ -252,29 +255,29 @@ def main():
         committed_count = 0
         rebase_needed = False
 
-        for commit in all_pending_commits:
-            session_code = commit.session
-            bill_number = commit.bill_number
-            author_name = commit.author_name
-            author_email = commit.author_email
+        if not args.dry_run:
+            for commit in all_pending_commits:
+                session_code = commit.session
+                bill_number = commit.bill_number
+                author_name = commit.author_name
+                author_email = commit.author_email
 
-            bill_dir = os.path.join(args.repo, session_code, "bills", bill_number)
-            os.makedirs(bill_dir, exist_ok=True)
+                bill_dir = os.path.join(args.repo, session_code, "bills", bill_number)
+                os.makedirs(bill_dir, exist_ok=True)
 
-            if commit.type == "stage":
-                stage_name = commit.stage_name
-                stage_date = commit.stage_date
-                if stage_date and stage_date.startswith("0001-01-01"):
-                    stage_date = None
+                if commit.type == "stage":
+                    stage_name = commit.stage_name
+                    stage_date = commit.stage_date
+                    if stage_date and stage_date.startswith("0001-01-01"):
+                        stage_date = None
 
-                # Copy cached files to target repo
-                shutil.copy2(commit.stage_xml_path, os.path.join(bill_dir, "bill_text.xml"))
-                if os.path.exists(commit.stage_md_path):
-                    shutil.copy2(commit.stage_md_path, os.path.join(bill_dir, "bill_text.md"))
-                shutil.copy2(commit.metadata_xml_path, os.path.join(bill_dir, "metadata.xml"))
-                shutil.copy2(commit.summary_md_path, os.path.join(bill_dir, "summary.md"))
+                    # Copy cached files to target repo
+                    shutil.copy2(commit.stage_xml_path, os.path.join(bill_dir, "bill_text.xml"))
+                    if os.path.exists(commit.stage_md_path):
+                        shutil.copy2(commit.stage_md_path, os.path.join(bill_dir, "bill_text.md"))
+                    shutil.copy2(commit.metadata_xml_path, os.path.join(bill_dir, "metadata.xml"))
+                    shutil.copy2(commit.summary_md_path, os.path.join(bill_dir, "summary.md"))
 
-                if not args.dry_run:
                     # Stage files in git
                     run_command(
                         [
@@ -309,21 +312,20 @@ def main():
                             run_git_commit(commit_msg, stage_date, args.repo, author_name, author_email)
                             committed_count += 1
 
-            elif commit.type == "metadata":
-                event_date = commit.event_date
-                if event_date and event_date.startswith("0001-01-01"):
-                    event_date = None
+                elif commit.type == "metadata":
+                    event_date = commit.event_date
+                    if event_date and event_date.startswith("0001-01-01"):
+                        event_date = None
 
-                shutil.copy2(commit.metadata_xml_path, os.path.join(bill_dir, "metadata.xml"))
-                shutil.copy2(commit.summary_md_path, os.path.join(bill_dir, "summary.md"))
+                    shutil.copy2(commit.metadata_xml_path, os.path.join(bill_dir, "metadata.xml"))
+                    shutil.copy2(commit.summary_md_path, os.path.join(bill_dir, "summary.md"))
 
-                # If there are restored files, copy them as well
-                if commit.restore_xml_path:
-                    shutil.copy2(commit.restore_xml_path, os.path.join(bill_dir, "bill_text.xml"))
-                if commit.restore_md_path:
-                    shutil.copy2(commit.restore_md_path, os.path.join(bill_dir, "bill_text.md"))
+                    # If there are restored files, copy them as well
+                    if commit.restore_xml_path:
+                        shutil.copy2(commit.restore_xml_path, os.path.join(bill_dir, "bill_text.xml"))
+                    if commit.restore_md_path:
+                        shutil.copy2(commit.restore_md_path, os.path.join(bill_dir, "bill_text.md"))
 
-                if not args.dry_run:
                     git_add_args = [
                         "git",
                         "add",
@@ -383,6 +385,33 @@ def main():
     if interrupted:
         log_message("Progress saved on interrupt. Exiting gracefully.")
         sys.exit(0)
+
+
+def fix_encoding_main():
+    """CLI entrypoint to repair Mojibake in existing repository files."""
+    parser = argparse.ArgumentParser(description="Repair Mojibake in repository files")
+    parser.add_argument("--repo", default=".", help="Path to target data repository")
+    args = parser.parse_args()
+
+    fixed_count = 0
+    for root_dir, _dirs, files in os.walk(args.repo):
+        if any(skip in root_dir for skip in (".git", ".cache", ".venv")):
+            continue
+        for f in files:
+            if f.endswith((".md", ".xml", ".txt")):
+                path = os.path.join(root_dir, f)
+                try:
+                    with open(path, encoding="utf-8") as fp:
+                        content = fp.read()
+                    fixed = fix_mojibake(content)
+                    if fixed != content:
+                        fixed_count += 1
+                        log_message(f"Fixed Mojibake in: {path}")
+                        with open(path, "w", encoding="utf-8") as fp:
+                            fp.write(fixed)
+                except Exception:
+                    pass
+    log_message(f"Total files updated: {fixed_count}")
 
 
 if __name__ == "__main__":
