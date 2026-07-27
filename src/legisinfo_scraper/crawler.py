@@ -14,7 +14,7 @@ from .parser import (
     make_summary_markdown,
     xml_to_markdown,
 )
-from .schemas import MetadataPendingBill, ScrapeResult, StagePendingBill
+from .schemas import DocViewerLinks, MetadataPendingBill, ScrapeResult, StagePendingBill
 from .utils import clean_sponsor_name, fix_mojibake, generate_sponsor_email, log_message
 
 
@@ -210,7 +210,7 @@ def scrape_html_bill_text(session, bill_number, slug, cache_dir=None):
         return ""
 
 
-def extract_xml_links_from_docviewer(session, bill_number, cache_dir=None):
+def extract_xml_links_from_docviewer(session, bill_number, cache_dir=None) -> DocViewerLinks:
     """Scrape first-reading page to find all available stages and their XML/HTML document links."""
     first_reading_url = f"{DOC_VIEWER_BASE}/en/{session}/bill/{bill_number}/first-reading"
     fr_cache_path = None
@@ -220,7 +220,7 @@ def extract_xml_links_from_docviewer(session, bill_number, cache_dir=None):
     try:
         fr_text = fetch_url_with_cache(first_reading_url, fr_cache_path)
         if not fr_text:
-            return {}, {}
+            return DocViewerLinks()
 
         soup = BeautifulSoup(fr_text, "html.parser")
 
@@ -258,10 +258,10 @@ def extract_xml_links_from_docviewer(session, bill_number, cache_dir=None):
                     if generic_xml_match:
                         xml_links[slug] = f"https://www.parl.ca{generic_xml_match.group(1)}"
 
-        return xml_links, html_links
+        return DocViewerLinks(xml_links=xml_links, html_links=html_links)
     except Exception as e:
         log_message(f"    Error scraping DocumentViewer for {bill_number}: {e}")
-        return {}, {}
+        return DocViewerLinks()
 
 
 def scrape_bill(
@@ -322,7 +322,8 @@ def scrape_bill(
     author_email = generate_sponsor_email(sponsor_name)
 
     # 2. Find available stage text documents from DocumentViewer
-    xml_links, html_links = extract_xml_links_from_docviewer(session, bill_number, cache_dir=cache_dir)
+    links = extract_xml_links_from_docviewer(session, bill_number, cache_dir=cache_dir)
+    xml_links, html_links = links.xml_links, links.html_links
     available_stages = set(xml_links.keys()) | set(html_links.keys())
 
     # Filter to stages not yet downloaded in this session
@@ -415,6 +416,7 @@ def scrape_bill(
                 stage_md_path=stage_md_path,
                 metadata_xml_path=metadata_path,
                 summary_md_path=summary_path,
+                type="stage",
             )
             pending_commits.append(pending_bill)
         except Exception as e:
@@ -472,14 +474,19 @@ def scrape_bill(
         summary_md_path=summary_path,
         restore_xml_path=restore_xml if os.path.exists(restore_xml) else None,
         restore_md_path=restore_md if os.path.exists(restore_md) else None,
+        type="metadata",
     )
 
     pending_commits.append(meta_pending_bill)
 
+    stage_commits = [c for c in pending_commits if isinstance(c, StagePendingBill)]
+    meta_commits = [c for c in pending_commits if isinstance(c, MetadataPendingBill)]
+
     return ScrapeResult(
         success=True,
-        updated_stages=current_stages,
+        updated_stages=list(current_stages),
         author_name=author_name,
         author_email=author_email,
-        pending_commits=pending_commits,
+        stage_pending_commits=stage_commits,
+        metadata_pending_commits=meta_commits,
     )

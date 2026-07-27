@@ -2,12 +2,13 @@ import os
 import re
 from datetime import datetime
 
+from .schemas import BillIndexData, SessionInfo
 from .utils import fix_mojibake, log_message
 
 
-def parse_readme_index(readme_path):
+def parse_readme_index(readme_path) -> dict[str, BillIndexData]:
     """Parse existing README.md index to recover status, activity, and downloaded stages."""
-    index_data = {}
+    index_data: dict[str, BillIndexData] = {}
     if not os.path.exists(readme_path):
         return index_data
 
@@ -38,23 +39,27 @@ def parse_readme_index(readme_path):
                 checked = match.group(6).strip()
 
                 slugs = [s.strip().replace("`", "") for s in stages_str.split(",") if s.strip() and s.strip() != "None"]
-                index_data[bill_num] = {
-                    "title": title,
-                    "status": status,
-                    "activity": activity,
-                    "stages": set(slugs),
-                    "last_checked": checked,
-                }
+                index_data[bill_num] = BillIndexData(
+                    title=title,
+                    status=status,
+                    activity=activity,
+                    stages=set(slugs),
+                    last_checked=checked,
+                )
     except Exception as e:
         log_message(f"Warning: Failed to parse existing README.md index: {e}")
 
     return index_data
 
 
-def save_readme_index(readme_path, all_bills_data, session):
+def save_readme_index(readme_path, all_bills_data: dict[str, BillIndexData | dict], session: str):
     """Write the updated index table and stats to README.md."""
     total_bills = len(all_bills_data)
-    in_committee = sum(1 for b in all_bills_data.values() if "committee" in b.get("status", "").lower())
+    in_committee = 0
+    for b in all_bills_data.values():
+        b_status = b.status if isinstance(b, BillIndexData) else b.get("status", "")
+        if "committee" in b_status.lower():
+            in_committee += 1
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -82,11 +87,20 @@ def save_readme_index(readme_path, all_bills_data, session):
 
     for bill_num in sorted(all_bills_data.keys(), key=sort_key):
         b = all_bills_data[bill_num]
-        title = fix_mojibake(b.get("title", "")).replace("|", "\\|")
-        status = fix_mojibake(b.get("status", "")).replace("|", "\\|")
-        activity = fix_mojibake(b.get("activity", "")).replace("|", "\\|")
-        stages_str = ", ".join(f"`{s}`" for s in sorted(b.get("stages", []))) if b.get("stages") else "None"
-        checked = b.get("last_checked", now_str)
+        if isinstance(b, BillIndexData):
+            title = fix_mojibake(b.title).replace("|", "\\|")
+            status = fix_mojibake(b.status).replace("|", "\\|")
+            activity = fix_mojibake(b.activity).replace("|", "\\|")
+            stages_set = b.stages
+            checked = b.last_checked or now_str
+        else:
+            title = fix_mojibake(b.get("title", "")).replace("|", "\\|")
+            status = fix_mojibake(b.get("status", "")).replace("|", "\\|")
+            activity = fix_mojibake(b.get("activity", "")).replace("|", "\\|")
+            stages_set = b.get("stages", set())
+            checked = b.get("last_checked", now_str)
+
+        stages_str = ", ".join(f"`{s}`" for s in sorted(stages_set)) if stages_set else "None"
 
         md.append(f"| [{bill_num}](bills/{bill_num}) | {title} | {status} | {activity} | {stages_str} | {checked} |\n")
 
@@ -102,7 +116,7 @@ def update_root_readme(repo_path, session, session_name):
     root_readme_path = os.path.join(repo_path, "README.md")
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    sessions = {}
+    sessions: dict[str, SessionInfo] = {}
     if os.path.exists(root_readme_path):
         try:
             with open(root_readme_path, encoding="utf-8") as f:
@@ -116,7 +130,7 @@ def update_root_readme(repo_path, session, session_name):
                     s_status = match.group(3).strip()
                     s_updated = match.group(4).strip()
                     if s_code != "Link":  # skip header
-                        sessions[s_code] = {"name": s_name, "status": s_status, "updated": s_updated}
+                        sessions[s_code] = SessionInfo(name=s_name, status=s_status, updated=s_updated)
         except Exception as e:
             log_message(f"Warning: Failed to parse root README.md: {e}")
 
@@ -127,7 +141,7 @@ def update_root_readme(repo_path, session, session_name):
         else "Prerogative/Dissolved"
     )
 
-    sessions[session] = {"name": clean_name or f"Session {session}", "status": status, "updated": now_str}
+    sessions[session] = SessionInfo(name=clean_name or f"Session {session}", status=status, updated=now_str)
 
     md = []
     md.append("# Canadian Parliamentary Bills Database\n\n")
@@ -138,7 +152,7 @@ def update_root_readme(repo_path, session, session_name):
 
     for s_code in sorted(sessions.keys()):
         s_info = sessions[s_code]
-        md.append(f"| {s_info['name']} | [{s_code}]({s_code}/README.md) | {s_info['status']} | {s_info['updated']} |\n")
+        md.append(f"| {s_info.name} | [{s_code}]({s_code}/README.md) | {s_info.status} | {s_info.updated} |\n")
 
     try:
         with open(root_readme_path, "w", encoding="utf-8") as f:

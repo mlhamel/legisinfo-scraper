@@ -67,8 +67,8 @@ def report_status(repo_path):
                     api_info = api_bills_info.get((sess_code, b_num))
                     if api_info:
                         api_status, api_activity = api_info
-                        index_status = b_data.get("status", "")
-                        index_activity = b_data.get("activity", "")
+                        index_status = b_data.status
+                        index_activity = b_data.activity
                         if index_status != api_status or index_activity != api_activity:
                             incomplete_bills.append(b_num)
 

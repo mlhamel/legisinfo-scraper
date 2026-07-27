@@ -11,6 +11,7 @@ from .config import LEGISINFO_BASE
 from .crawler import scrape_bill
 from .git_utils import find_commit_by_event_id, run_command, run_git_autosquash, run_git_commit, run_git_fixup
 from .index_manager import migrate_existing_index, parse_readme_index, save_readme_index, update_root_readme
+from .schemas import BillIndexData, MetadataPendingBill, StagePendingBill
 from .utils import fix_mojibake, log_message, print_progress
 
 
@@ -27,8 +28,16 @@ def parse_event_date(date_str):
 
 
 def get_commit_sort_key(commit):
-    date_val = getattr(commit, "stage_date", None) or getattr(commit, "event_date", None)
-    return parse_event_date(date_val)
+    if isinstance(commit, StagePendingBill):
+        date_val = commit.stage_date
+        priority = 0
+    elif isinstance(commit, MetadataPendingBill):
+        date_val = commit.event_date
+        priority = 1
+    else:
+        date_val = None
+        priority = 2
+    return (parse_event_date(date_val), priority)
 
 
 def main():
@@ -150,15 +159,18 @@ def main():
                 total_to_process = len(bills_to_process)
 
                 # Track metadata of all processed bills to build final README.md
-                all_bills_data = {}
+                all_bills_data: dict[str, BillIndexData] = {}
                 for k, v in index_data.items():
-                    all_bills_data[k] = {
-                        "title": v.get("title", ""),
-                        "status": v["status"],
-                        "activity": v["activity"],
-                        "stages": v["stages"],
-                        "last_checked": v["last_checked"],
-                    }
+                    if isinstance(v, BillIndexData):
+                        all_bills_data[k] = v
+                    else:
+                        all_bills_data[k] = BillIndexData(
+                            title=v.get("title", ""),
+                            status=v.get("status", ""),
+                            activity=v.get("activity", ""),
+                            stages=v.get("stages", set()),
+                            last_checked=v.get("last_checked", ""),
+                        )
 
                 session_indices[session_code] = {
                     "readme_path": session_readme_path,
@@ -192,24 +204,32 @@ def main():
                             )
 
                     if existing:
-                        already_downloaded_stages = existing["stages"]
+                        already_downloaded_stages = (
+                            existing.stages if isinstance(existing, BillIndexData) else existing["stages"]
+                        )
+                        existing_status = (
+                            existing.status if isinstance(existing, BillIndexData) else existing["status"]
+                        )
+                        existing_activity = (
+                            existing.activity if isinstance(existing, BillIndexData) else existing["activity"]
+                        )
                         # Skip optimization: only skip if metadata is identical AND
                         # the sequential file is present on disk!
                         if (
                             not args.force
-                            and existing["status"] == status
-                            and existing["activity"] == activity
+                            and existing_status == status
+                            and existing_activity == activity
                             and already_downloaded_stages
                             and os.path.exists(bill_xml_path)
                         ):
                             # Update cache/checks
-                            all_bills_data[bill_number] = {
-                                "title": title,
-                                "status": status,
-                                "activity": activity,
-                                "stages": already_downloaded_stages,
-                                "last_checked": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            }
+                            all_bills_data[bill_number] = BillIndexData(
+                                title=title,
+                                status=status,
+                                activity=activity,
+                                stages=already_downloaded_stages,
+                                last_checked=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            )
                             processed += 1
                             is_skipped = True
                             print_progress(processed, total_to_process, bill_number, "Skipped (Up to date)")
@@ -232,14 +252,15 @@ def main():
                         )
 
                         if result.success:
-                            all_bills_data[bill_number] = {
-                                "title": title,
-                                "status": status,
-                                "activity": activity,
-                                "stages": list(result.updated_stages),
-                                "last_checked": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            }
-                            all_pending_commits.extend(result.pending_commits)
+                            all_bills_data[bill_number] = BillIndexData(
+                                title=title,
+                                status=status,
+                                activity=activity,
+                                stages=result.updated_stages,
+                                last_checked=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            )
+                            all_pending_commits.extend(result.stage_pending_commits)
+                            all_pending_commits.extend(result.metadata_pending_commits)
 
                         processed += 1
                         print_progress(processed, total_to_process, bill_number, "Completed scraping")
@@ -265,7 +286,7 @@ def main():
                 bill_dir = os.path.join(args.repo, session_code, "bills", bill_number)
                 os.makedirs(bill_dir, exist_ok=True)
 
-                if commit.type == "stage":
+                if isinstance(commit, StagePendingBill):
                     stage_name = commit.stage_name
                     stage_date = commit.stage_date
                     if stage_date and stage_date.startswith("0001-01-01"):
@@ -279,17 +300,7 @@ def main():
                     shutil.copy2(commit.summary_md_path, os.path.join(bill_dir, "summary.md"))
 
                     # Stage files in git
-                    run_command(
-                        [
-                            "git",
-                            "add",
-                            f"{session_code}/bills/{bill_number}/bill_text.xml",
-                            f"{session_code}/bills/{bill_number}/bill_text.md",
-                            f"{session_code}/bills/{bill_number}/metadata.xml",
-                            f"{session_code}/bills/{bill_number}/summary.md",
-                        ],
-                        cwd=args.repo,
-                    )
+                    run_command(["git", "add", f"{session_code}/bills/{bill_number}"], cwd=args.repo)
 
                     diff_staged = run_command(["git", "diff", "--cached", "--quiet"], cwd=args.repo)
                     if diff_staged.returncode != 0:
@@ -312,7 +323,7 @@ def main():
                             run_git_commit(commit_msg, stage_date, args.repo, author_name, author_email)
                             committed_count += 1
 
-                elif commit.type == "metadata":
+                elif isinstance(commit, MetadataPendingBill):
                     event_date = commit.event_date
                     if event_date and event_date.startswith("0001-01-01"):
                         event_date = None
@@ -326,18 +337,7 @@ def main():
                     if commit.restore_md_path:
                         shutil.copy2(commit.restore_md_path, os.path.join(bill_dir, "bill_text.md"))
 
-                    git_add_args = [
-                        "git",
-                        "add",
-                        f"{session_code}/bills/{bill_number}/metadata.xml",
-                        f"{session_code}/bills/{bill_number}/summary.md",
-                    ]
-                    if commit.restore_xml_path:
-                        git_add_args.append(f"{session_code}/bills/{bill_number}/bill_text.xml")
-                    if commit.restore_md_path:
-                        git_add_args.append(f"{session_code}/bills/{bill_number}/bill_text.md")
-
-                    run_command(git_add_args, cwd=args.repo)
+                    run_command(["git", "add", f"{session_code}/bills/{bill_number}"], cwd=args.repo)
 
                     diff_staged = run_command(["git", "diff", "--cached", "--quiet"], cwd=args.repo)
                     if diff_staged.returncode != 0:
@@ -365,22 +365,26 @@ def main():
             log_message("Performing Git autosquash rebase to integrate formatting updates...")
             rebase_res = run_git_autosquash(args.repo)
             if rebase_res.returncode != 0:
-                log_message(f"Warning: Git autosquash rebase failed: {rebase_res.stderr}")
-                log_message("You may need to resolve conflicts manually.")
+                log_message(
+                    "Warning: Git autosquash rebase encountered conflicts. Aborting rebase to preserve clean tree..."
+                )
+                run_command(["git", "rebase", "--abort"], cwd=args.repo)
 
-        # 4. Save and commit README indices
+        # 4. Save and commit README indices and perform final sweep
         if not args.dry_run:
             for session_code, info in session_indices.items():
                 save_readme_index(info["readme_path"], info["all_bills_data"], session_code)
                 update_root_readme(args.repo, session_code, info["session_name"])
-                run_command(["git", "add", f"{session_code}/README.md", "README.md"], cwd=args.repo)
 
-            diff_readme = run_command(["git", "diff", "--cached", "--quiet"], cwd=args.repo)
-            if diff_readme.returncode != 0:
+            # Final sweep: Stage and commit any remaining uncommitted or untracked bill files/indices
+            status_res = run_command(["git", "status", "--porcelain"], cwd=args.repo)
+            if status_res.stdout.strip():
+                log_message("Finalizing and committing remaining bill files and index updates...")
+                run_command(["git", "add", "-A"], cwd=args.repo)
                 if interrupted:
                     run_git_commit("Scraper: Save index status on user interrupt", None, args.repo)
                 else:
-                    run_git_commit("Scraper: Update index checked timestamps", None, args.repo)
+                    run_git_commit("Scraper: Update index checked timestamps and remaining files", None, args.repo)
 
     if interrupted:
         log_message("Progress saved on interrupt. Exiting gracefully.")
