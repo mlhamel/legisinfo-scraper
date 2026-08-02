@@ -23,7 +23,7 @@ jobs:
           python-version-file: "pyproject.toml"
           
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --all-extras
         
       - name: Run Ruff check
         run: uv run ruff check .
@@ -47,7 +47,7 @@ jobs:
           python-version-file: "pyproject.toml"
           
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --all-extras
         
       - name: Run tests
         run: uv run pytest

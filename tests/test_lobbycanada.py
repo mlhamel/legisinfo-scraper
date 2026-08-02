@@ -2,10 +2,12 @@ import os
 import tempfile
 from unittest.mock import patch
 
+import pytest
 from civican.schemas import LobbyRegistration
 
 from civican.scraper.crawlers.lobbycanada.crawler import LobbyCanadaCrawler
 from civican.scraper.crawlers.lobbycanada.parser import extract_bill_references, parse_registration_entry
+from civican.scraper.exporters import HAS_DUCKDB
 
 
 def test_extract_bill_references():
@@ -58,6 +60,7 @@ def test_lobbycanada_crawler_execution_json():
             assert os.path.exists(os.path.join(tmpdir, "communications"))
 
 
+@pytest.mark.skipif(not HAS_DUCKDB, reason="duckdb dependency not installed")
 def test_lobbycanada_crawler_execution_duckdb():
     mock_reg_csv = (
         '"REGID","REGISTRANT_NAME","CLIENT_ORG_NAME","REG_TYPE","REG_STATUS",'
