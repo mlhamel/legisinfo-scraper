@@ -120,8 +120,8 @@ def parse_zip_registrations(zip_path: str) -> list[dict[str, Any]]:
                 reader = csv.DictReader(line.decode("utf-8", errors="replace") for line in f)
                 for row in reader:
                     reg_id = row.get("REG_ID_ENR", "")
-                    prenom = row.get('RGSTRNT_1ST_NM_PRENOM_DCLRNT', '').strip()
-                    nom = row.get('RGSTRNT_LAST_NM_NOM_DCLRNT', '').strip()
+                    prenom = row.get("RGSTRNT_1ST_NM_PRENOM_DCLRNT", "").strip()
+                    nom = row.get("RGSTRNT_LAST_NM_NOM_DCLRNT", "").strip()
                     registrant = f"{prenom} {nom}".strip()
                     client_org = (
                         row.get("EN_CLIENT_ORG_CORP_NM_AN", "").strip() or row.get("EN_CLIENT_ORG_NM_AN", "").strip()
@@ -328,7 +328,7 @@ class LobbyCanadaCrawler(BaseCrawler):
                         "\ufeff\r\n"
                     )
                     if "COMCID" in text[:200] or "COMLOG" in text[:200]:
-                        reader = csv.DictReader(text.splitlines())
+                        reader = csv.DictReader(io.StringIO(text))
                         comm_rows = list(reader)
                 except Exception as e:
                     log_message(f"Warning: Failed to fetch communications CSV: {e}")
