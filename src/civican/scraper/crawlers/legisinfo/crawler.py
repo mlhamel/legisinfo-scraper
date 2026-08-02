@@ -2,9 +2,14 @@ import os
 import re
 import sys
 import xml.etree.ElementTree as ET
+from typing import Any
 
 import requests
 from bs4 import BeautifulSoup, NavigableString
+from civican.schemas import DocViewerLinks, MetadataPendingBill, ScrapeResult, StagePendingBill
+
+from civican.scraper.crawlers.base import BaseCrawler
+from civican.scraper.utils import clean_sponsor_name, fix_mojibake, generate_sponsor_email, log_message
 
 from .config import DOC_VIEWER_BASE, LEGISINFO_BASE
 from .parser import (
@@ -14,8 +19,6 @@ from .parser import (
     make_summary_markdown,
     xml_to_markdown,
 )
-from .schemas import DocViewerLinks, MetadataPendingBill, ScrapeResult, StagePendingBill
-from .utils import clean_sponsor_name, fix_mojibake, generate_sponsor_email, log_message
 
 
 def fetch_url_with_cache(url, cache_path=None):
@@ -229,7 +232,8 @@ def extract_xml_links_from_docviewer(session, bill_number, cache_dir=None) -> Do
         stage_slugs = []
         if tabs:
             for tab in tabs:
-                href = tab.get("href", "")
+                href_attr = tab.get("href", "")
+                href = " ".join(href_attr) if isinstance(href_attr, list) else (href_attr or "")
                 match = re.search(rf"/bill/{bill_number}/([^/?#\s]+)", href)
                 if match:
                     stage_slugs.append(match.group(1))
@@ -490,3 +494,36 @@ def scrape_bill(
         stage_pending_commits=stage_commits,
         metadata_pending_commits=meta_commits,
     )
+
+
+class LegisinfoCrawler(BaseCrawler):
+    """Crawler implementation for Canadian Parliamentary LEGISinfo data."""
+
+    @property
+    def source_name(self) -> str:
+        return "legisinfo"
+
+    def scrape_bill(
+        self,
+        session: str,
+        bill_number: str,
+        cache_bill_dir: str,
+        repo_path: str,
+        already_downloaded_stages: set[str],
+        dry_run: bool = False,
+        cache_dir: str | None = None,
+    ) -> ScrapeResult:
+        return scrape_bill(
+            session,
+            bill_number,
+            cache_bill_dir,
+            repo_path,
+            already_downloaded_stages,
+            dry_run=dry_run,
+            cache_dir=cache_dir,
+        )
+
+    def report_status(self, repo_path: str) -> Any:
+        from .report_status import report_status
+
+        return report_status(repo_path)

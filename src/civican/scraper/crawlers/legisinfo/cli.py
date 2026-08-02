@@ -6,13 +6,20 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 
 import requests
+from civican.schemas import BillIndexData, MetadataPendingBill, StagePendingBill
+
+from civican.scraper.git_utils import (
+    find_commit_by_event_id,
+    run_command,
+    run_git_autosquash,
+    run_git_commit,
+    run_git_fixup,
+)
+from civican.scraper.utils import fix_mojibake, log_message, print_progress
 
 from .config import LEGISINFO_BASE
 from .crawler import scrape_bill
-from .git_utils import find_commit_by_event_id, run_command, run_git_autosquash, run_git_commit, run_git_fixup
 from .index_manager import migrate_existing_index, parse_readme_index, save_readme_index, update_root_readme
-from .schemas import BillIndexData, MetadataPendingBill, StagePendingBill
-from .utils import fix_mojibake, log_message, print_progress
 
 
 def parse_event_date(date_str):
@@ -207,9 +214,7 @@ def main():
                         already_downloaded_stages = (
                             existing.stages if isinstance(existing, BillIndexData) else existing["stages"]
                         )
-                        existing_status = (
-                            existing.status if isinstance(existing, BillIndexData) else existing["status"]
-                        )
+                        existing_status = existing.status if isinstance(existing, BillIndexData) else existing["status"]
                         existing_activity = (
                             existing.activity if isinstance(existing, BillIndexData) else existing["activity"]
                         )

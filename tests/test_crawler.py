@@ -1,6 +1,6 @@
 from bs4 import BeautifulSoup
 
-from legisinfo_scraper.crawler import clean_html_to_markdown
+from civican.scraper.crawlers.legisinfo.crawler import clean_html_to_markdown
 
 
 def test_clean_html_to_markdown_deep_nesting():

@@ -1,4 +1,4 @@
-from legisinfo_scraper.utils import fix_mojibake
+from civican.scraper.utils import fix_mojibake
 
 
 def test_fix_mojibake_french_accents():

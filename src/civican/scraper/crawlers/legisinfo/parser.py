@@ -2,8 +2,9 @@ import os
 import sys
 import xml.etree.ElementTree as ET
 
+from civican.scraper.utils import fix_mojibake
+
 from .config import STAGE_DETAILS
-from .utils import fix_mojibake
 
 
 def get_stage_info(slug):

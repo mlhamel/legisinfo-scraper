@@ -2,8 +2,9 @@ import os
 import re
 from datetime import datetime
 
-from .schemas import BillIndexData, SessionInfo
-from .utils import fix_mojibake, log_message
+from civican.schemas import BillIndexData, SessionInfo
+
+from civican.scraper.utils import fix_mojibake, log_message
 
 
 def parse_readme_index(readme_path) -> dict[str, BillIndexData]:
@@ -18,7 +19,7 @@ def parse_readme_index(readme_path) -> dict[str, BillIndexData]:
 
         # Reconstruct split lines for robust parsing
         raw_lines = content.splitlines()
-        lines = []
+        lines: list[str] = []
         for line in raw_lines:
             if line.strip().startswith("|") and not line.startswith("|") and lines:
                 lines[-1] = lines[-1].rstrip() + " " + line.strip()

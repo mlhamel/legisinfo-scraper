@@ -1,7 +1,7 @@
 [project]
-name = "legisinfo-scraper"
-version = "0.3.0"
-description = "Scraper for Canadian parliamentary bill data, committing updates to a Git repository."
+name = "civican-scraper"
+version = "0.8.8"
+description = "Multi-source scraper suite for Canadian legislative data (LEGISinfo, etc.), committing updates to Git repositories."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
@@ -10,6 +10,7 @@ authors = [
 ]
 dependencies = [
     "requests>=2.31.0",
+    "curl-cffi>=0.7.0",
     "beautifulsoup4>=4.12.0",
     "pydantic>=2.0.0",
     "ftfy>=6.0.0",
@@ -20,6 +21,12 @@ dependencies = [
 civican-schemas = { path = "../civican-schemas", editable = true }
 
 [project.optional-dependencies]
+duckdb = [
+    "duckdb>=0.10.0",
+]
+all = [
+    "duckdb>=0.10.0",
+]
 dev = [
     "pytest>=8.0.0",
     "ruff>=0.3.0",
@@ -27,16 +34,17 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/mlhamel/legisinfo-scraper"
-Repository = "https://github.com/mlhamel/legisinfo-scraper"
-Issues = "https://github.com/mlhamel/legisinfo-scraper/issues"
+Homepage = "https://github.com/civican/civican-scraper"
+Repository = "https://github.com/civican/civican-scraper"
+Issues = "https://github.com/civican/civican-scraper/issues"
 
 [project.scripts]
-legisinfo-scraper = "legisinfo_scraper.cli:main"
-legisinfo-fix-encoding = "legisinfo_scraper.cli:fix_encoding_main"
+civican-scraper = "civican.scraper.cli:main"
+legisinfo-scraper = "civican.scraper.crawlers.legisinfo.cli:main"
+legisinfo-fix-encoding = "civican.scraper.crawlers.legisinfo.cli:fix_encoding_main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/legisinfo_scraper"]
+packages = ["src/civican"]
 
 [tool.ruff]
 line-length = 120

@@ -7,8 +7,8 @@ import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
-from legisinfo_scraper.cli import main as scraper_main
-from legisinfo_scraper.report_status import report_status as status_main
+from civican.scraper.crawlers.legisinfo.cli import main as scraper_main
+from civican.scraper.crawlers.legisinfo.report_status import report_status as status_main
 
 
 def mock_requests_get(url, *_args, **_kwargs):
@@ -119,6 +119,7 @@ class TestScraperIntegration(unittest.TestCase):
         # Set local git config for author/email
         subprocess.run(["git", "config", "user.name", "Test User"], cwd=self.repo_path, check=True)
         subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=self.repo_path, check=True)
+        os.environ["GIT_SEQUENCE_EDITOR"] = "true"
 
     def tearDown(self):
         # Cleanup temporary directory

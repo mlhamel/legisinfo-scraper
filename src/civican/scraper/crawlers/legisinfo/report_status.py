@@ -4,9 +4,10 @@ import xml.etree.ElementTree as ET
 
 import requests
 
+from civican.scraper.utils import fix_mojibake
+
 from .config import LEGISINFO_BASE
 from .index_manager import parse_readme_index
-from .utils import fix_mojibake
 
 
 def report_status(repo_path):
