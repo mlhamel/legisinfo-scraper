@@ -181,8 +181,8 @@ def parse_zip_communications(zip_path: str) -> list[dict[str, Any]]:
                     )
                     comm_date = row.get("COMMUNICATION_DATE", "").strip()
                     posted_date = row.get("POSTED_DATE_PUBLICATION", "").strip()
-                    first_name = row.get('LOBBYIST_1ST_NM_PRENOM_LOBBYISTE', '').strip()
-                    last_name = row.get('LOBBYIST_LAST_NM_NOM_LOBBYISTE', '').strip()
+                    first_name = row.get("LOBBYIST_1ST_NM_PRENOM_LOBBYISTE", "").strip()
+                    last_name = row.get("LOBBYIST_LAST_NM_NOM_LOBBYISTE", "").strip()
                     lobbyist = f"{first_name} {last_name}".strip()
 
                     dpoh_list = dpoh_map.get(com_id, [])
