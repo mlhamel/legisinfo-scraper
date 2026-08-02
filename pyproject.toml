@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-civican-schemas = { path = "../civican-schemas", editable = true }
+civican-schemas = { git = "https://github.com/civican/civican-schemas.git" }
 
 [project.optional-dependencies]
 duckdb = [

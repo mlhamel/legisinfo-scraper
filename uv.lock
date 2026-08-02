@@ -277,22 +277,13 @@ wheels = [
 [[package]]
 name = "civican-schemas"
 version = "0.4.0"
-source = { editable = "../civican-schemas" }
+source = { git = "https://github.com/civican/civican-schemas.git#f5e932e60f05eec5a592ef530c6be2183f580ad2" }
 dependencies = [
     { name = "connectrpc" },
     { name = "mypy-protobuf" },
     { name = "protobuf" },
     { name = "protobuf-to-pydantic" },
     { name = "pydantic" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "connectrpc", specifier = ">=0.10.1" },
-    { name = "mypy-protobuf", specifier = ">=5.1.0" },
-    { name = "protobuf", specifier = ">=4.25.0" },
-    { name = "protobuf-to-pydantic", specifier = ">=0.3.3.1" },
-    { name = "pydantic", specifier = ">=2.13.4" },
 ]
 
 [[package]]
@@ -329,7 +320,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
-    { name = "civican-schemas", editable = "../civican-schemas" },
+    { name = "civican-schemas", git = "https://github.com/civican/civican-schemas.git" },
     { name = "curl-cffi", specifier = ">=0.7.0" },
     { name = "duckdb", marker = "extra == 'all'", specifier = ">=0.10.0" },
     { name = "duckdb", marker = "extra == 'duckdb'", specifier = ">=0.10.0" },
