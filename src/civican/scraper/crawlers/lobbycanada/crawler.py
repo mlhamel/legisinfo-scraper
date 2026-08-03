@@ -25,21 +25,21 @@ from .exporter import LobbyCanadaDuckDBExporter
 from .parser import parse_communication_entry, parse_registration_entry
 
 
-LANDING_PAGE_URL = "https://lobbycanada.gc.ca/app/secure/ocl/lrs/do/clnSelectDataExport?lang=eng"
-
-
-def download_open_canada_file(url: str, target_path: str, timeout: int = 300) -> bool:
+def download_open_canada_file(
+    url: str, target_path: str, dataset_page_url: str | None = None, timeout: int = 300
+) -> bool:
     """Download Open Data file from Open Government Portal to target_path using curl_cffi or curl."""
     os.makedirs(os.path.dirname(os.path.abspath(target_path)), exist_ok=True)
+    referer = dataset_page_url or "https://open.canada.ca/data/en/dataset/a34eb330-7136-4f5e-9f5f-3ba41df58b06"
 
     # 1. Try curl_cffi Session to obtain session cookies and bypass Cloudflare/WAF checks
     try:
         from curl_cffi import requests as cffi_requests
 
-        session = cffi_requests.Session(impersonate="chrome120")
-        session.get(LANDING_PAGE_URL, timeout=30)
+        session = cffi_requests.Session(impersonate="chrome124")
+        session.get(referer, timeout=30)
 
-        headers = {"Referer": LANDING_PAGE_URL}
+        headers = {"Referer": referer}
         resp = session.get(url, headers=headers, timeout=timeout)
         if resp.status_code == 200 and len(resp.content) > 1000:
             with open(target_path, "wb") as f:
@@ -59,8 +59,8 @@ def download_open_canada_file(url: str, target_path: str, timeout: int = 300) ->
                 "-c",
                 cookie_file,
                 "-A",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                LANDING_PAGE_URL,
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                referer,
             ],
             timeout=30,
         )
@@ -71,9 +71,9 @@ def download_open_canada_file(url: str, target_path: str, timeout: int = 300) ->
                 "-b",
                 cookie_file,
                 "-e",
-                LANDING_PAGE_URL,
+                referer,
                 "-A",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
                 "-o",
                 target_path,
                 url,
@@ -303,7 +303,7 @@ class LobbyCanadaCrawler(BaseCrawler):
             log_message("Fetching Lobbying Registrations from Open Government Portal...")
             if not os.path.exists(cached_reg_zip):
                 log_message(f"Downloading Open Data registrations archive to {cached_reg_zip}...")
-                download_open_canada_file(REGISTRATIONS_CSV_URL, cached_reg_zip)
+                download_open_canada_file(REGISTRATIONS_CSV_URL, cached_reg_zip, dataset_page_url=REGISTRATIONS_DATASET_URL)
 
             reg_rows = []
             if os.path.exists(cached_reg_zip):
@@ -342,7 +342,7 @@ class LobbyCanadaCrawler(BaseCrawler):
             log_message("Fetching Monthly Communication Reports from Open Government Portal...")
             if not os.path.exists(cached_comm_zip):
                 log_message(f"Downloading Open Data communications archive to {cached_comm_zip}...")
-                download_open_canada_file(COMMUNICATIONS_CSV_URL, cached_comm_zip)
+                download_open_canada_file(COMMUNICATIONS_CSV_URL, cached_comm_zip, dataset_page_url=COMMUNICATIONS_DATASET_URL)
 
             comm_rows = []
             if os.path.exists(cached_comm_zip):
