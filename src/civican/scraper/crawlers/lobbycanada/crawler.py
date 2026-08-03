@@ -25,15 +25,22 @@ from .exporter import LobbyCanadaDuckDBExporter
 from .parser import parse_communication_entry, parse_registration_entry
 
 
+LANDING_PAGE_URL = "https://lobbycanada.gc.ca/app/secure/ocl/lrs/do/clnSelectDataExport?lang=eng"
+
+
 def download_open_canada_file(url: str, target_path: str, timeout: int = 300) -> bool:
     """Download Open Data file from Open Government Portal to target_path using curl_cffi or curl."""
     os.makedirs(os.path.dirname(os.path.abspath(target_path)), exist_ok=True)
 
-    # 1. Try curl_cffi to bypass Cloudflare WAF challenge (impersonating Chrome browser)
+    # 1. Try curl_cffi Session to obtain session cookies and bypass Cloudflare/WAF checks
     try:
         from curl_cffi import requests as cffi_requests
 
-        resp = cffi_requests.get(url, impersonate="chrome120", timeout=timeout)
+        session = cffi_requests.Session(impersonate="chrome120")
+        session.get(LANDING_PAGE_URL, timeout=30)
+
+        headers = {"Referer": LANDING_PAGE_URL}
+        resp = session.get(url, headers=headers, timeout=timeout)
         if resp.status_code == 200 and len(resp.content) > 1000:
             with open(target_path, "wb") as f:
                 f.write(resp.content)
@@ -42,15 +49,31 @@ def download_open_canada_file(url: str, target_path: str, timeout: int = 300) ->
     except Exception as e:
         log_message(f"Notice: curl_cffi download failed for {url}: {e}")
 
-    # 2. Fallback to curl CLI
+    # 2. Fallback to curl CLI using cookie jar and referer
+    cookie_file = os.path.join(tempfile.gettempdir(), "lobbycanada_cookies.txt")
     try:
+        subprocess.run(
+            [
+                "curl",
+                "-sL",
+                "-c",
+                cookie_file,
+                "-A",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                LANDING_PAGE_URL,
+            ],
+            timeout=30,
+        )
         proc = subprocess.run(
             [
                 "curl",
                 "-sL",
+                "-b",
+                cookie_file,
+                "-e",
+                LANDING_PAGE_URL,
                 "-A",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "-o",
                 target_path,
                 url,
@@ -61,6 +84,12 @@ def download_open_canada_file(url: str, target_path: str, timeout: int = 300) ->
             return True
     except Exception as e:
         log_message(f"Warning: Exception in download_open_canada_file ({url}): {e}")
+    finally:
+        if os.path.exists(cookie_file):
+            try:
+                os.remove(cookie_file)
+            except OSError:
+                pass
 
     return False
 

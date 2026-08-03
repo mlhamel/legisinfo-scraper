@@ -1,6 +1,6 @@
 [project]
 name = "civican-scraper"
-version = "0.8.8"
+version = "0.8.9"
 description = "Multi-source scraper suite for Canadian legislative data (LEGISinfo, etc.), committing updates to Git repositories."
 readme = "README.md"
 license = { text = "MIT" }
